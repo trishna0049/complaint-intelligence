@@ -1,20 +1,23 @@
 # Build progress
 
-Tracks the spec's 10-step build plan. Each phase is finished (code + tests + verified by hand) before the next starts.
+The project was first scoped as a large event-driven platform (Kafka, workers, Postgres/pgvector, SLA engine,
+JWT roles). On request it was **simplified** to the core described in the project summary:
 
-| # | Phase | Status |
-|---|---|---|
-| 1 | Setup — structure, .gitignore, .env.example, dataset profile | ✅ done |
-| 2 | Foundation — Docker, schema, FastAPI, auth, React shell, seed | ⏳ |
-| 3 | Ticket engine — workflow, permissions, CSV import, ticket screens | ⏳ |
-| 4 | AI triage — classifiers, sentiment, entities, priority, evaluation | ⏳ |
-| 5 | Events — Kafka, outbox, workers, routing, retries, DLQ | ⏳ |
-| 6 | Copilot — LLM summaries, actions, draft replies, PII masking | ⏳ |
-| 7 | Retrieval — embeddings, similar tickets, KB, RAG | ⏳ |
-| 8 | SLA and notifications — deadlines, countdowns, escalation, alerts | ⏳ |
-| 9 | Analytics — dashboard, KPIs, trends, insights, My stats | ⏳ |
-| 10 | Production — security, monitoring, tests, CI/CD, docs | ⏳ |
+> NLP pipeline (Hugging Face Transformers + scikit-learn) that classifies complaints by category, sentiment,
+> intent and priority; OpenAI API to summarise complaints, extract key issues and recommend actions; FastAPI
+> backend; React dashboards tracking trends, sentiment and high-priority issues.
 
-## Notes
-- Phase 1: `ml/profile_dataset.py` → `docs/DATA_PROFILE.md`. Key finding: `Customer Remarks` (33.5% filled, median 3 words)
-  are mostly survey feedback ("Good", "Thank you"), so text-only category accuracy is inherently limited.
+| Step | Status |
+|---|---|
+| Dataset profile (`ml/profile_dataset.py` → `docs/DATA_PROFILE.md`) | ✅ |
+| Category + intent classifiers (TF-IDF + LR baseline vs text + structured), evaluation report | ✅ |
+| Hugging Face sentiment (5 levels) validated against CSAT | ✅ |
+| Entities (regex), raise-only priority rules, PII masking | ✅ |
+| LLM insights — OpenAI structured outputs + offline mock | ✅ |
+| FastAPI backend (SQLite) + idempotent dataset importer | ✅ |
+| React dashboard, complaints list, new complaint (live triage), complaint detail (AI insights) | ✅ |
+| Tests (pytest + Vitest), lint, GitHub Actions CI | ✅ |
+| Docs: README, architecture, priority rules, model card | ✅ |
+
+Removed in the simplification: Kafka + outbox + workers + DLQ, Redis, Postgres/pgvector + embeddings/RAG,
+JWT auth and roles, SLA engine, notifications, Prometheus/Grafana, Docker images.

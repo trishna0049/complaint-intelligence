@@ -1,0 +1,5 @@
+[project]
+name = "complaint-intelligence-backend"
+version = "1.0.0"
+requires-python = ">=3.12"
+# Lint settings live in /ruff.toml

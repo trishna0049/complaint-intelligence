@@ -1,0 +1,17 @@
+# --- API ---
+fastapi==0.142.2
+uvicorn[standard]==0.54.0
+pydantic==2.13.5
+pydantic-settings==2.15.0
+SQLAlchemy==2.1.3
+# --- AI / ML ---
+scikit-learn==1.9.1
+joblib==1.6.0
+numpy==2.5.3
+pandas==3.0.6
+scipy==1.18.1
+transformers==5.18.0
+openai==3.24.0
+# CPU-only PyTorch for the Hugging Face sentiment model
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.14.1

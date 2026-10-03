@@ -1,0 +1,10 @@
+line-length = 120
+target-version = "py312"
+src = ["backend"]
+
+[lint]
+select = ["E", "F", "W", "I", "B", "UP", "RUF"]
+ignore = ["RUF001", "RUF002", "RUF003", "B008"]
+
+[lint.isort]
+known-first-party = ["app", "scripts"]

@@ -1,0 +1,39 @@
+text,category
+"I was charged twice for my order of ₹12,500 and have already contacted support three times.",Payments related
+"Payment failed but the money was deducted from my bank account.",Payments related
+"My UPI payment is showing pending for two days and the order is not confirmed.",Payments related
+"EMI was not applied on my credit card even though I selected it at checkout.",Payments related
+"The amount was debited twice from my wallet for one order.",Payments related
+"Card transaction failed three times and each time money got deducted.",Payments related
+"I returned the shoes 10 days ago and still have not received my refund.",Refund Related
+"Refund for my cancelled order is not credited to my account yet.",Refund Related
+"Where is my money back? The refund was approved last week.",Refund Related
+"COD refund details are not visible and I want my money back.",Refund Related
+"The delivery agent did not come for the reverse pickup of my return.",Returns
+"I received a damaged mixer grinder and want a replacement.",Returns
+"Wrong item delivered, I ordered a blue shirt but got a red one. Please exchange it.",Returns
+"My return request was rejected without any reason.",Returns
+"The laptop I received is defective and I want to return it.",Returns
+"Pickup for my return has been rescheduled three times.",Returns
+"My order has not been delivered even after 10 days.",Order Related
+"Order is delayed and tracking has not updated since Monday.",Order Related
+"Where is my order? It was supposed to arrive yesterday.",Order Related
+"I need the invoice for my refrigerator order for warranty purposes.",Order Related
+"Installation and demo for my washing machine has not been scheduled.",Order Related
+"Delivery was marked as done but I never got the package.",Order Related
+"Please cancel my order, I no longer need it.",Cancellation
+"The seller cancelled my order without informing me.",Cancellation
+"I want to cancel the order I placed by mistake.",Cancellation
+"Cashback of ₹200 promised on the offer was never credited.",Offers & Cashback
+"The coupon code is not working at checkout.",Offers & Cashback
+"Instant discount on my bank card was not applied.",Offers & Cashback
+"My Shopzilla Premium membership benefits are not showing.",Shopzilla Related
+"I was charged for the premium membership but rewards are missing.",Shopzilla Related
+"The app crashes every time I open my orders page.",App/website
+"I cannot log in, the OTP never arrives.",App/website
+"What is the warranty period for this phone?",Product Queries
+"Please share the nearest service centre for my television.",Product Queries
+"The customer care executive was rude and unprofessional on the call.",Feedback
+"Very unhappy with how the agent behaved with me.",Feedback
+"I want to register as a seller on your platform.",Onboarding related
+"Seller onboarding is stuck at document verification.",Onboarding related
