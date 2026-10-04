@@ -150,16 +150,17 @@ def create_insight(db: Session, complaint_id: int) -> AIInsight:
         "amount_inr": c.amount_inr,
         "entities": c.entities,
     }
-    result, provider = generate_insight(c.text, context, known_names=[c.customer_name] if c.customer_name else None)
+    run = generate_insight(c.text, context, known_names=[c.customer_name] if c.customer_name else None)
     insight = AIInsight(
         complaint_id=c.id,
-        summary=result.summary,
-        key_issues=result.key_issues,
-        recommended_actions=result.recommended_actions,
-        customer_reply=result.customer_reply,
-        provider=provider.name,
-        model=provider.model,
+        summary=run.insight.summary,
+        key_issues=run.insight.key_issues,
+        recommended_actions=run.insight.recommended_actions,
+        customer_reply=run.insight.customer_reply,
+        provider=run.provider,
+        model=(run.usage or {}).get("model") or run.model,
         prompt_version=PROMPT_VERSION,
+        usage=run.usage,
     )
     db.add(insight)
     db.commit()

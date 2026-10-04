@@ -36,7 +36,8 @@ Other commands: `.\scripts\dev.ps1 test`, `lint`, `api`, `web`, `reset-db`.
 Analyze → save → AI insights → list search → dashboard → resolve). It starts its own API and web servers on ports
 18100/15200 with a separate `var\e2e.db` and the mock LLM, so it never touches your data. It needs the trained
 models; Chromium is downloaded into `.pw-browsers\` on first run. Ports live in `.env`
-(`API_PORT`, `WEB_PORT`). To use OpenAI, set `LLM_PROVIDER=openai` and `OPENAI_API_KEY=...` in `.env`.
+(`API_PORT`, `WEB_PORT`). To use OpenAI, set `LLM_PROVIDER=openai` and `OPENAI_API_KEY=...` in `.env` and restart
+the API; each insight then shows its token count and estimated cost.
 
 On macOS/Linux the same steps are: `python -m venv backend/.venv`, `pip install -r backend/requirements.txt -r
 backend/requirements-dev.txt`, `python ml/train_classifiers.py`, `python ml/eval_sentiment.py`,
@@ -130,8 +131,10 @@ scripts/dev.ps1     all developer commands
   model-labelled. 67% of imported rows have no remark, so they have a templated text and no sentiment.
 - **Dates are shifted.** Imported timestamps are moved forward by whole days so the newest record is yesterday
   (relative spacing preserved; disable with `import_dataset --no-shift`). The data covers only ~5 weeks.
-- **Mock LLM by default.** Without `OPENAI_API_KEY` the insights come from a deterministic template engine. The
-  OpenAI path uses structured outputs but was not exercised here (no key in this environment).
+- **LLM.** The mock is the default; with `LLM_PROVIDER=openai` real calls were verified end to end
+  (`gpt-4o-mini`, ~470 tokens and ~$0.00014 per complaint at list price). Failures are never replaced by mock
+  output: a bad key, rate limit/quota, timeout or network error shows a clear message in the UI. Masked
+  placeholders such as `[NAME]` can appear in the generated summary and draft reply for the agent to fill in.
 - **Sentiment model speed.** BERT on CPU scores ~15 remarks/s in batch; single complaints take ~0.1–0.3 s.
 - **No authentication or multi-user features.** This is a single-user analysis tool; put it behind your own
   auth before exposing it beyond localhost.

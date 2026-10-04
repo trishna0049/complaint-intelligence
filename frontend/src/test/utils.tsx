@@ -4,7 +4,10 @@ import type { ReactElement } from "react";
 import { MemoryRouter } from "react-router-dom";
 import { vi } from "vitest";
 
-type Handler = (url: string, init?: RequestInit) => { status?: number; body?: unknown } | undefined;
+type Handler = (
+  url: string,
+  init?: RequestInit,
+) => { status?: number; body?: unknown; headers?: Record<string, string>; throws?: boolean } | undefined;
 
 /** Mock global fetch: handlers are tried in order; unmatched requests return 404. */
 export function mockFetch(...handlers: Handler[]) {
@@ -12,7 +15,13 @@ export function mockFetch(...handlers: Handler[]) {
     const url = typeof input === "string" ? input : input.toString();
     for (const h of handlers) {
       const r = h(url, init);
-      if (r) return new Response(JSON.stringify(r.body ?? {}), { status: r.status ?? 200, headers: { "Content-Type": "application/json" } });
+      if (r?.throws) throw new TypeError("Failed to fetch");
+      if (r) {
+        return new Response(JSON.stringify(r.body ?? {}), {
+          status: r.status ?? 200,
+          headers: { "Content-Type": "application/json", ...(r.headers ?? {}) },
+        });
+      }
     }
     return new Response(JSON.stringify({ detail: `unmocked ${url}` }), { status: 404 });
   });

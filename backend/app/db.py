@@ -41,7 +41,19 @@ def get_engine() -> Engine:
 def init_db() -> None:
     from app import models  # noqa: F401  (register tables)
 
-    Base.metadata.create_all(get_engine())
+    engine = get_engine()
+    Base.metadata.create_all(engine)
+    _add_missing_columns(engine)
+
+
+def _add_missing_columns(engine: Engine) -> None:
+    """Tiny forward-only migration: add nullable columns introduced after a database was created."""
+    if engine.dialect.name != "sqlite":
+        return
+    with engine.begin() as conn:
+        existing = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(ai_insights)")}
+        if existing and "usage" not in existing:
+            conn.exec_driver_sql("ALTER TABLE ai_insights ADD COLUMN usage JSON")
 
 
 def reset_engine() -> None:

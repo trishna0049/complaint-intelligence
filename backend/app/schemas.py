@@ -70,6 +70,7 @@ class InsightOut(BaseModel):
     provider: str
     model: str
     prompt_version: str
+    usage: dict[str, Any] | None = None
     created_at: datetime
 
 

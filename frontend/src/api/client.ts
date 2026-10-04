@@ -2,7 +2,15 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tansta
 import type { Complaint, ComplaintDetail, ComplaintInput, Dashboard, Insight, Page, TriagePreview } from "./types";
 
 export class ApiError extends Error {
-  constructor(public status: number, message: string, public details?: unknown) {
+  constructor(
+    public status: number,
+    message: string,
+    public details?: unknown,
+    /** Machine-readable error code from the API, e.g. "llm_rate_limited". */
+    public code?: string,
+    /** Seconds to wait before retrying (from the Retry-After header), when the API sends one. */
+    public retryAfter?: number,
+  ) {
     super(message);
   }
 }
@@ -12,23 +20,35 @@ type Query = Record<string, string | number | boolean | undefined | null>;
 export async function api<T>(path: string, init: { method?: string; body?: unknown; query?: Query } = {}): Promise<T> {
   const qs = new URLSearchParams();
   for (const [k, v] of Object.entries(init.query ?? {})) if (v !== undefined && v !== null && v !== "") qs.set(k, String(v));
-  const res = await fetch(`/api${path}${qs.toString() ? `?${qs}` : ""}`, {
-    method: init.method ?? "GET",
-    headers: init.body !== undefined ? { "Content-Type": "application/json" } : undefined,
-    body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
-  });
+  let res: Response;
+  try {
+    res = await fetch(`/api${path}${qs.toString() ? `?${qs}` : ""}`, {
+      method: init.method ?? "GET",
+      headers: init.body !== undefined ? { "Content-Type": "application/json" } : undefined,
+      body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
+    });
+  } catch {
+    throw new ApiError(0, "Can't reach the API. Is the backend running?", undefined, "network_error");
+  }
   if (!res.ok) {
     let message = res.statusText || "Request failed";
     let details: unknown;
+    let code: string | undefined;
     try {
       const body = await res.json();
       details = body.detail;
       if (typeof body.detail === "string") message = body.detail;
       else if (Array.isArray(body.detail)) message = body.detail.map((d: { msg: string }) => d.msg).join("; ");
+      else if (body.detail && typeof body.detail.message === "string") {
+        // Typed errors, e.g. LLM failures: {detail: {code, message}}
+        message = body.detail.message;
+        code = body.detail.code;
+      }
     } catch {
       /* not JSON */
     }
-    throw new ApiError(res.status, message, details);
+    const retry = Number(res.headers.get("Retry-After"));
+    throw new ApiError(res.status, message, details, code, Number.isFinite(retry) && retry > 0 ? retry : undefined);
   }
   return (await res.json()) as T;
 }

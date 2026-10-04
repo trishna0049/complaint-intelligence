@@ -105,8 +105,9 @@ def test_mock_insight_matches_schema_and_uses_triage():
         "priority": "Critical",
         "entities": extract_entities("charged twice ₹12,500, contacted three times"),
     }
-    out = MockProvider().generate("I was charged twice for ₹12,500.", ctx)
+    out, usage = MockProvider().generate("I was charged twice for ₹12,500.", ctx)
     assert isinstance(out, ComplaintInsight)
+    assert usage is None  # the mock costs nothing
     assert "payment" in out.summary.lower()
     assert any("₹12,500" in i for i in out.key_issues)
     assert 2 <= len(out.recommended_actions) <= 5

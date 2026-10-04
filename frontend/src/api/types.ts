@@ -52,6 +52,8 @@ export interface Insight {
   provider: string;
   model: string;
   prompt_version: string;
+  usage: { model: string | null; prompt_tokens: number; completion_tokens: number; total_tokens: number;
+    estimated_cost_usd: number; latency_s: number } | null;
   created_at: string;
 }
 

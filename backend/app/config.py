@@ -21,6 +21,12 @@ class Settings(BaseSettings):
     llm_provider: Literal["mock", "openai"] = "mock"
     openai_api_key: str = ""
     openai_model: str = "gpt-4o-mini"
+    openai_base_url: str = ""  # optional: proxy / Azure-compatible endpoint
+    openai_timeout_seconds: float = 30.0
+    openai_max_retries: int = 1  # SDK retries 429/5xx/connection errors with backoff
+    # Used only to show an estimated cost per call (USD per 1M tokens; gpt-4o-mini list price).
+    openai_input_usd_per_1m: float = 0.15
+    openai_output_usd_per_1m: float = 0.60
     sentiment_model: str = "nlptown/bert-base-multilingual-uncased-sentiment"
     # Load the Hugging Face model. Tests switch this off and use a tiny lexicon fallback.
     enable_transformers: bool = True

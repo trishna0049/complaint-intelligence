@@ -6,12 +6,17 @@
 
 Personal data is masked before the text leaves the process. The suggested reply is only a draft:
 an agent must review it; nothing is ever sent to the customer automatically.
+
+OpenAI failures are never hidden behind mock output: each one is raised as an `LLMError` with an
+HTTP status and a message the UI shows as-is (bad key, rate limit / quota, timeout, network, ...).
 """
 
 from __future__ import annotations
 
 import logging
 import re
+import time
+from dataclasses import dataclass
 from typing import Any, Protocol
 
 from pydantic import BaseModel, Field
@@ -40,11 +45,33 @@ class ComplaintInsight(BaseModel):
     customer_reply: str
 
 
+Usage = dict[str, Any]
+
+
+class LLMError(Exception):
+    """An LLM call failed in a way the user should be told about (mapped to an HTTP response)."""
+
+    def __init__(self, code: str, message: str, status: int = 502, retry_after: int | None = None) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.status = status
+        self.retry_after = retry_after
+
+
+@dataclass
+class InsightRun:
+    insight: ComplaintInsight
+    provider: str
+    model: str
+    usage: Usage | None  # tokens + estimated cost (None for the mock)
+
+
 class InsightProvider(Protocol):
     name: str
     model: str
 
-    def generate(self, complaint_text: str, context: dict[str, Any]) -> ComplaintInsight: ...
+    def generate(self, complaint_text: str, context: dict[str, Any]) -> tuple[ComplaintInsight, Usage | None]: ...
 
 
 def build_user_prompt(masked_text: str, context: dict[str, Any]) -> str:
@@ -58,26 +85,102 @@ def build_user_prompt(masked_text: str, context: dict[str, Any]) -> str:
 class OpenAIProvider:
     name = "openai"
 
-    def __init__(self, api_key: str, model: str) -> None:
+    def __init__(
+        self, api_key: str, model: str, *, timeout: float = 30.0, max_retries: int = 1, base_url: str | None = None
+    ) -> None:
         from openai import OpenAI
 
-        self.client = OpenAI(api_key=api_key, timeout=30)
+        self.client = OpenAI(api_key=api_key, timeout=timeout, max_retries=max_retries, base_url=base_url or None)
         self.model = model
+        self.timeout = timeout
 
-    def generate(self, complaint_text: str, context: dict[str, Any]) -> ComplaintInsight:
-        completion = self.client.beta.chat.completions.parse(
-            model=self.model,
-            temperature=0.2,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": build_user_prompt(complaint_text, context)},
-            ],
-            response_format=ComplaintInsight,
+    def generate(self, complaint_text: str, context: dict[str, Any]) -> tuple[ComplaintInsight, Usage | None]:
+        import openai
+
+        started = time.perf_counter()
+        try:
+            completion = self.client.chat.completions.parse(
+                model=self.model,
+                temperature=0.2,
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": build_user_prompt(complaint_text, context)},
+                ],
+                response_format=ComplaintInsight,
+            )
+        except openai.OpenAIError as exc:
+            raise map_openai_error(exc, model=self.model, timeout=self.timeout) from exc
+        message = completion.choices[0].message
+        if message.parsed is None:
+            reason = getattr(message, "refusal", None) or "no structured content returned"
+            raise LLMError("llm_refused", f"OpenAI did not return insights: {reason}", 502)
+        usage = usage_from(completion, time.perf_counter() - started)
+        log.info("openai insight call %s", usage)
+        return message.parsed, usage
+
+
+def usage_from(completion: Any, seconds: float) -> Usage | None:
+    u = getattr(completion, "usage", None)
+    if u is None:
+        return None
+    s = get_settings()
+    cost = (u.prompt_tokens * s.openai_input_usd_per_1m + u.completion_tokens * s.openai_output_usd_per_1m) / 1e6
+    return {
+        "model": getattr(completion, "model", None),
+        "prompt_tokens": u.prompt_tokens,
+        "completion_tokens": u.completion_tokens,
+        "total_tokens": u.total_tokens,
+        "estimated_cost_usd": round(cost, 6),
+        "latency_s": round(seconds, 2),
+    }
+
+
+def map_openai_error(exc: Exception, *, model: str, timeout: float) -> LLMError:
+    """Translate OpenAI SDK exceptions into messages a support agent can act on."""
+    import openai
+
+    if isinstance(exc, openai.AuthenticationError):
+        return LLMError(
+            "llm_auth_failed", "OpenAI rejected the API key. Check OPENAI_API_KEY in .env and restart the backend.", 502
         )
-        parsed = completion.choices[0].message.parsed
-        if parsed is None:
-            raise RuntimeError("OpenAI returned no parsed content (possibly a refusal)")
-        return parsed
+    if isinstance(exc, openai.PermissionDeniedError):
+        return LLMError("llm_forbidden", f"The API key is not allowed to use model '{model}'.", 502)
+    if isinstance(exc, openai.NotFoundError):
+        return LLMError(
+            "llm_model_not_found", f"OpenAI model '{model}' was not found. Check OPENAI_MODEL in .env.", 502
+        )
+    if isinstance(exc, openai.RateLimitError):
+        body = getattr(exc, "body", None)
+        code = body.get("code") if isinstance(body, dict) else None
+        if code == "insufficient_quota":
+            return LLMError(
+                "llm_quota_exceeded",
+                "OpenAI quota exhausted for this API key. Check the account's billing and usage limits.",
+                429,
+            )
+        retry = _retry_after(exc)
+        wait = f"in about {retry} s" if retry else "in a moment"
+        return LLMError("llm_rate_limited", f"OpenAI rate limit reached. Try again {wait}.", 429, retry_after=retry)
+    if isinstance(exc, openai.APITimeoutError):
+        return LLMError("llm_timeout", f"OpenAI did not respond within {timeout:g} s. Try again.", 504)
+    if isinstance(exc, openai.APIConnectionError):
+        return LLMError("llm_unreachable", "Could not reach the OpenAI API. Check the network connection.", 502)
+    if isinstance(exc, openai.LengthFinishReasonError | openai.ContentFilterFinishReasonError):
+        return LLMError("llm_incomplete", "OpenAI stopped before finishing the insights. Try again.", 502)
+    if isinstance(exc, openai.APIStatusError):
+        return LLMError(
+            "llm_upstream_error", f"OpenAI returned an error (HTTP {exc.status_code}). Try again later.", 502
+        )
+    return LLMError("llm_error", "The insight request to OpenAI failed. Try again.", 502)
+
+
+def _retry_after(exc: Any) -> int | None:
+    response = getattr(exc, "response", None)
+    value = response.headers.get("retry-after") if response is not None else None
+    try:
+        return max(1, round(float(value))) if value else None
+    except ValueError:
+        return None
 
 
 # ----------------------------------------------------------------------------------- mock
@@ -156,7 +259,7 @@ class MockProvider:
     name = "mock"
     model = "mock-insight-v1"
 
-    def generate(self, complaint_text: str, context: dict[str, Any]) -> ComplaintInsight:
+    def generate(self, complaint_text: str, context: dict[str, Any]) -> tuple[ComplaintInsight, Usage | None]:
         category = context.get("category") or "General"
         intent = context.get("intent")
         sentiment = context.get("sentiment") or "Neutral"
@@ -188,31 +291,30 @@ class MockProvider:
             f"Hello,\n\n{apology}. I've reviewed your complaint about the {play['issue']} and I'm personally looking "
             f"into it now. I'll update you with the outcome and next steps shortly.\n\nRegards,\nShopzilla Support"
         )
-        return ComplaintInsight(
+        insight = ComplaintInsight(
             summary=summary, key_issues=issues[:4], recommended_actions=actions[:5], customer_reply=reply
         )
+        return insight, None
 
 
 def get_provider() -> InsightProvider:
     s = get_settings()
     if s.llm_provider == "openai":
         if not s.openai_api_key:
-            log.warning("LLM_PROVIDER=openai but OPENAI_API_KEY is empty; using the mock provider")
-            return MockProvider()
-        return OpenAIProvider(s.openai_api_key, s.openai_model)
+            raise LLMError("llm_not_configured", "LLM_PROVIDER is 'openai' but OPENAI_API_KEY is empty in .env.", 503)
+        return OpenAIProvider(
+            s.openai_api_key,
+            s.openai_model,
+            timeout=s.openai_timeout_seconds,
+            max_retries=s.openai_max_retries,
+            base_url=s.openai_base_url,
+        )
     return MockProvider()
 
 
-def generate_insight(
-    text: str, context: dict[str, Any], known_names: list[str] | None = None
-) -> tuple[ComplaintInsight, InsightProvider]:
+def generate_insight(text: str, context: dict[str, Any], known_names: list[str] | None = None) -> InsightRun:
+    """Mask personal data, then ask the configured provider. Errors propagate as LLMError."""
     provider = get_provider()
     masked = mask_pii(text, known_names)
-    try:
-        return provider.generate(masked, context), provider
-    except Exception:
-        if provider.name == "mock":
-            raise
-        log.exception("OpenAI call failed; falling back to the mock provider")
-        fallback = MockProvider()
-        return fallback.generate(masked, context), fallback
+    insight, usage = provider.generate(masked, context)
+    return InsightRun(insight=insight, provider=provider.name, model=provider.model, usage=usage)

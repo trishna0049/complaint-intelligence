@@ -115,3 +115,47 @@ describe("pages", () => {
     expect(screen.getByRole("button", { name: /Regenerate/ })).toBeInTheDocument();
   });
 });
+
+describe("insight errors are shown clearly, not crashes", () => {
+  const cases = [
+    { status: 502, code: "llm_auth_failed", title: "OpenAI API key rejected",
+      message: "OpenAI rejected the API key. Check OPENAI_API_KEY in .env and restart the backend.", retry: undefined },
+    { status: 504, code: "llm_timeout", title: "OpenAI timed out",
+      message: "OpenAI did not respond within 30 s. Try again.", retry: undefined },
+    { status: 429, code: "llm_rate_limited", title: "OpenAI rate limit reached",
+      message: "OpenAI rate limit reached. Try again in about 20 s.", retry: "20" },
+  ];
+
+  it.each(cases)("$code → alert with title and message", async ({ status, code, title, message, retry }) => {
+    mockFetch(
+      (u, i) => {
+        if (!(u.endsWith("/insights") && i?.method === "POST")) return undefined;
+        return { status, body: { detail: { code, message } }, headers: retry ? { "Retry-After": retry } : undefined };
+      },
+      (u) => (u.includes("/api/complaints/1") ? { body: complaint } : undefined),
+      (u) => (u.includes("/api/health") ? { body: health } : undefined),
+      () => ({ body: [] }),
+    );
+    renderRoute(<App />, "/complaints/1");
+    await userEvent.click(await screen.findByRole("button", { name: /Generate insights/ }));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(title);
+    expect(alert).toHaveTextContent(message);
+    if (retry) expect(alert).toHaveTextContent(`You can retry in ${retry} s.`);
+    // The page is still usable: complaint text visible and the button can be pressed again.
+    expect(screen.getByRole("heading", { name: "Charged twice for my order" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Generate insights/ })).toBeEnabled();
+  });
+
+  it("backend down → clear network message", async () => {
+    mockFetch(
+      (u, i) => (u.endsWith("/insights") && i?.method === "POST" ? { throws: true } : undefined),
+      (u) => (u.includes("/api/complaints/1") ? { body: complaint } : undefined),
+      (u) => (u.includes("/api/health") ? { body: health } : undefined),
+      () => ({ body: [] }),
+    );
+    renderRoute(<App />, "/complaints/1");
+    await userEvent.click(await screen.findByRole("button", { name: /Generate insights/ }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Can't reach the API. Is the backend running?");
+  });
+});

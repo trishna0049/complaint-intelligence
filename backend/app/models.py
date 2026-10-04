@@ -88,6 +88,8 @@ class AIInsight(Base):
     provider: Mapped[str] = mapped_column(String(16))
     model: Mapped[str] = mapped_column(String(64))
     prompt_version: Mapped[str] = mapped_column(String(16))
+    # Token usage and estimated cost for real LLM calls (None for the mock provider).
+    usage: Mapped[dict[str, Any] | None] = mapped_column(JSON(none_as_null=True))
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
 
     complaint: Mapped[Complaint] = relationship(back_populates="insights")
