@@ -3,13 +3,12 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.classifier import get_classifier
 from app.ai.priority import BASE_PRIORITY
-from app.ai.triage import triage
-from app.config import get_settings
-from app.db import get_db
+from app.core.config import get_settings
+from app.core.db import get_session
 from app.schemas import (
     ComplaintCreate,
     ComplaintDetail,
@@ -49,22 +48,20 @@ def categories() -> list[dict[str, str]]:
 
 
 @router.post("/triage", response_model=TriagePreview)
-def triage_preview(body: ComplaintCreate) -> TriagePreview:
+async def triage_preview(body: ComplaintCreate) -> TriagePreview:
     """Run the NLP pipeline without saving anything (used by the 'Analyze' button)."""
-    r = triage(
-        body.text, channel=body.channel, product=body.product, amount_inr=body.amount_inr, order_id=body.order_id
-    )
+    r = await svc.run_triage(body)
     return TriagePreview(**r.__dict__)
 
 
 @router.post("/complaints", response_model=ComplaintDetail, status_code=201)
-def create_complaint(body: ComplaintCreate, db: Session = Depends(get_db)) -> ComplaintDetail:
-    return to_detail(svc.create_complaint(db, body))
+async def create_complaint(body: ComplaintCreate, db: AsyncSession = Depends(get_session)) -> ComplaintDetail:
+    return to_detail(await svc.create_complaint(db, body))
 
 
 @router.get("/complaints", response_model=Page[ComplaintListItem])
-def list_complaints(
-    db: Session = Depends(get_db),
+async def list_complaints(
+    db: AsyncSession = Depends(get_session),
     q: str | None = Query(default=None, max_length=200),
     status: str | None = None,
     category: str | None = None,
@@ -77,7 +74,7 @@ def list_complaints(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=25, ge=1, le=100),
 ) -> Page[ComplaintListItem]:
-    items, total = svc.list_complaints(
+    items, total = await svc.list_complaints(
         db,
         q=q,
         status=status,
@@ -95,21 +92,25 @@ def list_complaints(
 
 
 @router.get("/complaints/{complaint_id}", response_model=ComplaintDetail)
-def get_complaint(complaint_id: int, db: Session = Depends(get_db)) -> ComplaintDetail:
-    return to_detail(svc.get_complaint(db, complaint_id))
+async def get_complaint(complaint_id: int, db: AsyncSession = Depends(get_session)) -> ComplaintDetail:
+    return to_detail(await svc.get_complaint(db, complaint_id))
 
 
 @router.patch("/complaints/{complaint_id}", response_model=ComplaintDetail)
-def update_complaint(complaint_id: int, body: ComplaintUpdate, db: Session = Depends(get_db)) -> ComplaintDetail:
-    return to_detail(svc.update_complaint(db, complaint_id, body))
+async def update_complaint(
+    complaint_id: int, body: ComplaintUpdate, db: AsyncSession = Depends(get_session)
+) -> ComplaintDetail:
+    return to_detail(await svc.update_complaint(db, complaint_id, body))
 
 
 @router.post("/complaints/{complaint_id}/insights", response_model=InsightOut, status_code=201)
-def generate_insights(complaint_id: int, db: Session = Depends(get_db)) -> InsightOut:
+async def generate_insights(complaint_id: int, db: AsyncSession = Depends(get_session)) -> InsightOut:
     """Summarise the complaint, extract key issues and recommend actions with the LLM."""
-    return InsightOut.model_validate(svc.create_insight(db, complaint_id))
+    return InsightOut.model_validate(await svc.create_insight(db, complaint_id))
 
 
 @router.get("/dashboard")
-def get_dashboard(days: int = Query(default=30, ge=7, le=365), db: Session = Depends(get_db)) -> dict[str, Any]:
-    return cached_dashboard(db, days)
+async def get_dashboard(
+    days: int = Query(default=30, ge=7, le=365), db: AsyncSession = Depends(get_session)
+) -> dict[str, Any]:
+    return await cached_dashboard(db, days)

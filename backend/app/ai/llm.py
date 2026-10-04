@@ -22,7 +22,7 @@ from typing import Any, Protocol
 from pydantic import BaseModel, Field
 
 from app.ai.pii import mask_pii
-from app.config import get_settings
+from app.core.config import get_settings
 
 log = logging.getLogger(__name__)
 

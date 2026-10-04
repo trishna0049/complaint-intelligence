@@ -1,22 +1,19 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
+from typing import Any
 
 from fastapi import HTTPException
-from sqlalchemy import func, or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.llm import PROMPT_VERSION, generate_insight
 from app.ai.priority import BASE_PRIORITY, decide_priority
 from app.ai.triage import TriageResult, triage
 from app.models import AIInsight, Complaint
+from app.repositories import complaints as repo
 from app.schemas import ComplaintCreate, ComplaintUpdate
 from app.services.dashboard import invalidate_cache
-
-
-def next_reference(db: Session) -> str:
-    last = db.scalar(select(func.max(Complaint.id))) or 0
-    return f"CMP-{last + 1:06d}"
 
 
 def default_subject(text: str) -> str:
@@ -24,12 +21,21 @@ def default_subject(text: str) -> str:
     return first if len(first) <= 80 else first[:77].rstrip() + "…"
 
 
-def create_complaint(db: Session, data: ComplaintCreate) -> Complaint:
-    result = triage(
-        data.text, channel=data.channel, product=data.product, amount_inr=data.amount_inr, order_id=data.order_id
+async def run_triage(data: ComplaintCreate) -> TriageResult:
+    # The models are CPU-bound; keep them off the event loop.
+    return await asyncio.to_thread(
+        triage,
+        data.text,
+        channel=data.channel,
+        product=data.product,
+        amount_inr=data.amount_inr,
+        order_id=data.order_id,
     )
+
+
+async def create_complaint(db: AsyncSession, data: ComplaintCreate) -> Complaint:
+    result = await run_triage(data)
     complaint = Complaint(
-        reference=next_reference(db),
         source="new",
         subject=(data.subject or "").strip() or default_subject(data.text),
         text=data.text,
@@ -42,10 +48,9 @@ def create_complaint(db: Session, data: ComplaintCreate) -> Complaint:
         status="Open",
     )
     apply_triage(complaint, result)
-    db.add(complaint)
-    db.commit()
-    invalidate_cache()
-    db.refresh(complaint)
+    await repo.add(db, complaint)
+    await db.commit()
+    await invalidate_cache()
     return complaint
 
 
@@ -58,65 +63,15 @@ def apply_triage(c: Complaint, r: TriageResult) -> None:
     c.model_version, c.labels_from = r.model_version, "model"
 
 
-def list_complaints(
-    db: Session,
-    *,
-    q: str | None = None,
-    status: str | None = None,
-    category: str | None = None,
-    sentiment: str | None = None,
-    priority: str | None = None,
-    channel: str | None = None,
-    source: str | None = None,
-    needs_review: bool | None = None,
-    sort: str = "newest",
-    page: int = 1,
-    page_size: int = 25,
-) -> tuple[list[Complaint], int]:
-    stmt = select(Complaint)
-    if q:
-        like = f"%{q.strip()}%"
-        stmt = stmt.where(
-            or_(
-                Complaint.text.ilike(like),
-                Complaint.subject.ilike(like),
-                Complaint.reference == q.strip().upper(),
-                Complaint.order_id == q.strip(),
-            )
-        )
-    for column, value in (
-        (Complaint.status, status),
-        (Complaint.category, category),
-        (Complaint.sentiment, sentiment),
-        (Complaint.priority, priority),
-        (Complaint.channel, channel),
-        (Complaint.source, source),
-    ):
-        if value:
-            stmt = stmt.where(column == value)
-    if needs_review is not None:
-        stmt = stmt.where(Complaint.needs_review.is_(needs_review))
-    total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
-    if sort == "priority":
-        rank = func.instr("LowMediumHighCritical", Complaint.priority)  # Critical has the highest position
-        stmt = stmt.order_by(rank.desc(), Complaint.created_at.desc())
-    elif sort == "oldest":
-        stmt = stmt.order_by(Complaint.created_at.asc())
-    else:
-        stmt = stmt.order_by(Complaint.created_at.desc(), Complaint.id.desc())
-    rows = db.scalars(stmt.limit(page_size).offset((page - 1) * page_size)).all()
-    return list(rows), total
-
-
-def get_complaint(db: Session, complaint_id: int) -> Complaint:
-    c = db.get(Complaint, complaint_id)
+async def get_complaint(db: AsyncSession, complaint_id: int) -> Complaint:
+    c = await repo.get(db, complaint_id)
     if c is None:
         raise HTTPException(status_code=404, detail="Complaint not found")
     return c
 
 
-def update_complaint(db: Session, complaint_id: int, data: ComplaintUpdate) -> Complaint:
-    c = get_complaint(db, complaint_id)
+async def update_complaint(db: AsyncSession, complaint_id: int, data: ComplaintUpdate) -> Complaint:
+    c = await get_complaint(db, complaint_id)
     if data.status and data.status != c.status:
         c.status = data.status
         c.resolved_at = datetime.now(UTC) if data.status == "Resolved" else None
@@ -132,14 +87,14 @@ def update_complaint(db: Session, complaint_id: int, data: ComplaintUpdate) -> C
             {"rule": "BASE", "reason": f"Base priority for {c.category}", "from": "", "to": decision.base},
             *decision.reasons,
         ]
-    db.commit()
-    invalidate_cache()
-    db.refresh(c)
+    await db.commit()
+    await invalidate_cache()
+    await db.refresh(c)
     return c
 
 
-def create_insight(db: Session, complaint_id: int) -> AIInsight:
-    c = get_complaint(db, complaint_id)
+async def create_insight(db: AsyncSession, complaint_id: int) -> AIInsight:
+    c = await get_complaint(db, complaint_id)
     context = {
         "category": c.category,
         "intent": c.intent,
@@ -150,7 +105,8 @@ def create_insight(db: Session, complaint_id: int) -> AIInsight:
         "amount_inr": c.amount_inr,
         "entities": c.entities,
     }
-    run = generate_insight(c.text, context, known_names=[c.customer_name] if c.customer_name else None)
+    # The OpenAI SDK call is blocking; run it in a worker thread.
+    run = await asyncio.to_thread(generate_insight, c.text, context, [c.customer_name] if c.customer_name else None)
     insight = AIInsight(
         complaint_id=c.id,
         summary=run.insight.summary,
@@ -162,7 +118,11 @@ def create_insight(db: Session, complaint_id: int) -> AIInsight:
         prompt_version=PROMPT_VERSION,
         usage=run.usage,
     )
-    db.add(insight)
-    db.commit()
-    db.refresh(insight)
+    await repo.add_insight(db, insight)
+    await db.commit()
+    await db.refresh(c, ["insights"])
     return insight
+
+
+async def list_complaints(db: AsyncSession, **params: Any) -> tuple[list[Complaint], int]:
+    return await repo.search(db, **params)

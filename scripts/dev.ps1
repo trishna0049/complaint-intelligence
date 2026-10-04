@@ -4,8 +4,10 @@
 
 .EXAMPLE
   .\scripts\dev.ps1 setup     # venv + Python deps + npm deps + .env
+  .\scripts\dev.ps1 up        # Postgres (pgvector) + Redis in Docker
+  .\scripts\dev.ps1 migrate   # Alembic migrations
   .\scripts\dev.ps1 train     # profile data, train classifiers, validate sentiment model
-  .\scripts\dev.ps1 import    # load the dataset into SQLite
+  .\scripts\dev.ps1 import    # load the dataset into Postgres
   .\scripts\dev.ps1 start     # API + web app (opens two windows)
 #>
 param(
@@ -44,6 +46,18 @@ function EnvValue([string]$Name, [string]$Default) {
 }
 
 function Need-Venv { if (-not (Test-Path $Py)) { throw "Run '.\scripts\dev.ps1 setup' first." } }
+function Compose([string[]]$Arguments) { Run "docker" (@("compose", "--project-directory", $Root) + $Arguments) }
+function Wait-Healthy([string]$Service) {
+    for ($i = 0; $i -lt 60; $i++) {
+        $id = (& docker compose --project-directory $Root ps -q $Service)
+        if ($id) {
+            $state = (& docker inspect -f "{{.State.Health.Status}}" $id)
+            if ($state -eq "healthy") { return }
+        }
+        Start-Sleep -Seconds 2
+    }
+    throw "$Service did not become healthy (docker compose logs $Service)"
+}
 function Need-Data {
     if (-not (Test-Path (Join-Path $Root "data\ecommerce_support.csv"))) {
         throw "Put the Kaggle 'eCommerce Customer Service Satisfaction' CSV at data\ecommerce_support.csv"
@@ -60,6 +74,19 @@ switch ($Command) {
         Write-Host "`nSetup complete. Next: .\scripts\dev.ps1 train ; .\scripts\dev.ps1 import ; .\scripts\dev.ps1 start" -ForegroundColor Green
     }
 
+    "up" {
+        Compose @("up", "-d", "postgres", "redis")
+        Wait-Healthy "postgres"; Wait-Healthy "redis"
+        Write-Host "Postgres on localhost:$(EnvValue 'POSTGRES_PORT' '15432'), Redis on localhost:$(EnvValue 'REDIS_PORT' '16379')" -ForegroundColor Cyan
+    }
+
+    "down" { Compose (@("down") + $Rest) }
+
+    "migrate" {
+        Need-Venv
+        Run $Py @("-m", "scripts.prepare_db") (Join-Path $Root "backend")
+    }
+
     "train" {
         Need-Venv; Need-Data
         Run $Py @("ml\profile_dataset.py")
@@ -73,9 +100,10 @@ switch ($Command) {
     }
 
     "reset-db" {
-        $db = Join-Path $Root "var\complaints.db"
-        Get-ChildItem "$db*" -ErrorAction SilentlyContinue | Remove-Item -Force
-        Write-Host "Deleted var\complaints.db (it is recreated on the next API start or import)"
+        # Drops every table in the development database and re-applies the migrations (data is lost).
+        Need-Venv
+        Run $Py @("-m", "scripts.prepare_db", "--reset") (Join-Path $Root "backend")
+        Write-Host "Database reset. Re-load the data with: .\scripts\dev.ps1 import" -ForegroundColor Yellow
     }
 
     "api" {
@@ -125,14 +153,16 @@ switch ($Command) {
 Usage: .\scripts\dev.ps1 <command>
 
   setup      Create .env, Python venv (backend\.venv) and install all dependencies
+  up | down  Start / stop Postgres (pgvector) + Redis in Docker (down -v also deletes the data)
+  migrate    Create the database if needed and apply the Alembic migrations
   train      Profile the dataset, train category/intent classifiers, validate the sentiment model
-  import     Load data\ecommerce_support.csv into the SQLite database (idempotent)
+  import     Load data\ecommerce_support.csv into Postgres (idempotent, batched)
   start      Start the API and the web app in two new windows
   api | web  Start only the API (uvicorn --reload) or only the Vite dev server
   test       Backend (pytest) + frontend (Vitest) tests
   e2e        Playwright end-to-end test of the full complaint flow (own servers + database)
   lint       ruff + eslint + TypeScript type-check
-  reset-db   Delete the SQLite database
+  reset-db   Drop and re-create the development database schema (data is lost)
 "@
     }
 }

@@ -21,27 +21,30 @@ Satisfaction* dataset (85,907 support records from an Indian e-commerce company)
 
 ## Quick start (Windows PowerShell)
 
-Prerequisites: Python 3.12, Node 20+, and the dataset CSV saved as `data\ecommerce_support.csv`.
+Prerequisites: Python 3.12, Node 20+, Docker Desktop, and the dataset CSV saved as `data\ecommerce_support.csv`.
 
 ```powershell
 .\scripts\dev.ps1 setup     # .env, Python venv, pip + npm install
+.\scripts\dev.ps1 up        # PostgreSQL 16 + pgvector (localhost:15432) and Redis (localhost:16379) in Docker
+.\scripts\dev.ps1 migrate   # create the database and apply the Alembic migrations
 .\scripts\dev.ps1 train     # data profile, train classifiers, validate the sentiment model (~45 min on CPU)
-.\scripts\dev.ps1 import    # load the 85,907 historical complaints into SQLite (~1 min)
+.\scripts\dev.ps1 import    # load the 85,907 historical complaints into Postgres (~75 s, idempotent)
 .\scripts\dev.ps1 start     # API on http://localhost:18000, app on http://localhost:15173
 ```
 
-Other commands: `.\scripts\dev.ps1 test`, `lint`, `api`, `web`, `reset-db`.
+Other commands: `.\scripts\dev.ps1 test` (needs `up`), `lint`, `api`, `web`, `down`, `reset-db`.
 
 **End-to-end test:** `.\scripts\dev.ps1 e2e` runs a Playwright test of the whole flow (dashboard → new complaint →
 Analyze → save → AI insights → list search → dashboard → resolve). It starts its own API and web servers on ports
-18100/15200 with a separate `var\e2e.db` and the mock LLM, so it never touches your data. It needs the trained
+18100/15200 with a separate Postgres database (`complaints_e2e`, wiped on every run) and the mock LLM, so it never
+touches your data. It needs the trained
 models; Chromium is downloaded into `.pw-browsers\` on first run. Ports live in `.env`
 (`API_PORT`, `WEB_PORT`). To use OpenAI, set `LLM_PROVIDER=openai` and `OPENAI_API_KEY=...` in `.env` and restart
 the API; each insight then shows its token count and estimated cost.
 
 On macOS/Linux the same steps are: `python -m venv backend/.venv`, `pip install -r backend/requirements.txt -r
 backend/requirements-dev.txt`, `python ml/train_classifiers.py`, `python ml/eval_sentiment.py`,
-`cd backend && python -m scripts.import_dataset`, `uvicorn app.main:app --port 18000`, `cd frontend && npm i && npm run dev`.
+`docker compose up -d postgres redis`, `cd backend && python -m scripts.prepare_db && python -m scripts.import_dataset`, `uvicorn app.main:app --port 18000`, `cd frontend && npm i && npm run dev`.
 
 ## Using it
 
@@ -102,7 +105,8 @@ Interactive docs: http://localhost:18000/docs
 ```
 backend/app/        FastAPI app — api/ (routes), services/ (complaints, dashboard SQL), ai/ (triage, classifier,
                     sentiment, entities, priority, pii, llm), models.py, schemas.py
-backend/scripts/    import_dataset.py
+backend/scripts/    prepare_db.py (create + migrate), import_dataset.py
+backend/migrations/ Alembic migrations
 ml/                 profile_dataset.py, train_classifiers.py, eval_sentiment.py, reports/, MODEL_CARD.md
 frontend/src/       pages/ (Dashboard, Complaints, NewComplaint, ComplaintDetail), components/, api/
 tests/backend/      pytest (AI components, API, dashboard)
@@ -120,7 +124,7 @@ scripts/dev.ps1     all developer commands
   fixed set of realistic complaints measures the deployed pipeline on complaint-style text.
 - **Human in the loop.** Low-confidence predictions are flagged *needs review*; the LLM's reply is only a draft.
 - **Privacy.** Emails, phones, cards, Aadhaar, PAN, UPI IDs and names are masked before any LLM call.
-- **Simple to run.** One FastAPI process + SQLite + Vite; the mock LLM means everything works without an API key.
+- **Simple to run.** Docker Compose for Postgres + Redis, one FastAPI process, Vite; the mock LLM means everything works without an API key.
 
 ## Known limitations
 
@@ -138,4 +142,3 @@ scripts/dev.ps1     all developer commands
 - **Sentiment model speed.** BERT on CPU scores ~15 remarks/s in batch; single complaints take ~0.1–0.3 s.
 - **No authentication or multi-user features.** This is a single-user analysis tool; put it behind your own
   auth before exposing it beyond localhost.
-- **SQLite** is ideal for one user and ~100k rows; for concurrent writers switch `DATABASE_URL` to Postgres.

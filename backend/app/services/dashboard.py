@@ -1,174 +1,62 @@
-"""Dashboard analytics, computed with SQL aggregates over the complaints table."""
+"""Dashboard analytics: composes the SQL aggregates in repositories.analytics, cached in Redis."""
 
 from __future__ import annotations
 
-import time
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import case, func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.redis import cached_json, invalidate
 from app.models import Complaint
+from app.repositories import analytics as q
 
-NEGATIVE = ("Very Negative", "Negative")
-SENTIMENTS = ["Very Negative", "Negative", "Neutral", "Positive", "Very Positive"]
+CACHE_NS = "analytics"
+CACHE_SECONDS = 60
 
 
 def _pct_change(cur: float, prev: float) -> float | None:
     return None if prev == 0 else round((cur - prev) / prev * 100, 1)
 
 
-# Small in-process cache: the dashboard scans the whole table, and writes call invalidate_cache().
-_CACHE: dict[int, tuple[float, dict[str, Any]]] = {}
-CACHE_SECONDS = 60
+async def invalidate_cache() -> None:
+    await invalidate(CACHE_NS)
 
 
-def invalidate_cache() -> None:
-    _CACHE.clear()
+async def cached_dashboard(db: AsyncSession, days: int = 30) -> dict[str, Any]:
+    return await cached_json(CACHE_NS, f"dashboard:{days}", CACHE_SECONDS, lambda: dashboard(db, days))
 
 
-def cached_dashboard(db: Session, days: int = 30) -> dict[str, Any]:
-    hit = _CACHE.get(days)
-    if hit and time.monotonic() - hit[0] < CACHE_SECONDS:
-        return hit[1]
-    result = dashboard(db, days)
-    _CACHE[days] = (time.monotonic(), result)
-    return result
-
-
-def dashboard(db: Session, days: int = 30, now: datetime | None = None) -> dict[str, Any]:
+async def dashboard(db: AsyncSession, days: int = 30, now: datetime | None = None) -> dict[str, Any]:
     now = now or datetime.now(UTC)
     # Window starts at midnight UTC so the first day in the trend is a complete day.
     since = (now - timedelta(days=days - 1)).replace(hour=0, minute=0, second=0, microsecond=0)
     prev_since = since - timedelta(days=days)
-    in_window = Complaint.created_at >= since
-    is_negative = Complaint.sentiment.in_(NEGATIVE)
 
-    # ---------------- KPIs (current window vs the previous window of equal length) ----------------
-    def kpis(start: datetime, end: datetime) -> dict[str, Any]:
-        row = db.execute(
-            select(
-                func.count(),
-                func.sum(case((Complaint.status != "Resolved", 1), else_=0)),
-                func.sum(case((Complaint.priority.in_(("High", "Critical")), 1), else_=0)),
-                func.sum(case((Complaint.priority == "Critical", 1), else_=0)),
-                func.sum(case((is_negative, 1), else_=0)),
-                func.count(Complaint.sentiment),
-                func.avg(Complaint.csat_score),
-                func.avg(Complaint.sentiment_score),
-            ).where(Complaint.created_at >= start, Complaint.created_at < end)
-        ).one()
-        total, open_, high, critical, neg, with_sent, csat, sent_score = row
-        return {
-            "total": total or 0,
-            "open": open_ or 0,
-            "high_priority": high or 0,
-            "critical": critical or 0,
-            "negative_share": round((neg or 0) / with_sent, 4) if with_sent else None,
-            "avg_csat": round(csat, 2) if csat is not None else None,
-            "avg_sentiment_score": round(sent_score, 2) if sent_score is not None else None,
-        }
-
-    current = kpis(since, now + timedelta(seconds=1))
-    previous = kpis(prev_since, since)
+    current = await q.kpis(db, since, now + timedelta(seconds=1))
+    previous = await q.kpis(db, prev_since, since)
     # Only compare periods when the data fully covers the previous window; otherwise the change is an artifact.
-    earliest = db.scalar(select(func.min(Complaint.created_at)))
+    earliest = await q.earliest_created(db)
     comparable = earliest is not None and earliest <= prev_since
     current["total_change_pct"] = _pct_change(current["total"], previous["total"]) if comparable else None
     current["high_priority_change_pct"] = (
         _pct_change(current["high_priority"], previous["high_priority"]) if comparable else None
     )
-    current["needs_review"] = (
-        db.scalar(select(func.count()).where(Complaint.needs_review.is_(True), Complaint.status != "Resolved")) or 0
-    )
-    current["open_high_priority"] = (
-        db.scalar(
-            select(func.count()).where(Complaint.status != "Resolved", Complaint.priority.in_(("High", "Critical")))
-        )
-        or 0
-    )
+    current["needs_review"], current["open_high_priority"] = await q.open_counts(db)
 
-    # ---------------- daily trend: volume + sentiment mix ----------------
-    day = func.date(Complaint.created_at)
-    trend_rows = db.execute(
-        select(
-            day.label("day"),
-            func.count(),
-            *[func.sum(case((Complaint.sentiment == s, 1), else_=0)) for s in SENTIMENTS],
-            func.sum(case((Complaint.priority.in_(("High", "Critical")), 1), else_=0)),
-            func.avg(Complaint.csat_score),
-        )
-        .where(in_window)
-        .group_by(day)
-        .order_by(day)
-    ).all()
-    trend = [
-        {
-            "date": r[0],
-            "total": r[1],
-            **{s: r[2 + i] or 0 for i, s in enumerate(SENTIMENTS)},
-            "high_priority": r[7] or 0,
-            "avg_csat": round(r[8], 2) if r[8] is not None else None,
-        }
-        for r in trend_rows
-    ]
-
-    # ---------------- breakdowns ----------------
-    def breakdown(column: Any, limit: int | None = None) -> list[dict[str, Any]]:
-        stmt = (
-            select(
-                column,
-                func.count().label("n"),
-                func.sum(case((is_negative, 1), else_=0)),
-                func.count(Complaint.sentiment),
-                func.sum(case((Complaint.priority.in_(("High", "Critical")), 1), else_=0)),
-            )
-            .where(in_window, column.is_not(None))
-            .group_by(column)
-            .order_by(func.count().desc())
-        )
-        if limit:
-            stmt = stmt.limit(limit)
-        return [
-            {
-                "name": name,
-                "count": n,
-                # share of complaints *with a sentiment score* that are negative (templated rows have none)
-                "negative_share": round((neg or 0) / scored, 4) if scored else None,
-                "high_priority": high or 0,
-            }
-            for name, n, neg, scored, high in db.execute(stmt).all()
-        ]
-
-    sentiment_dist = dict(
-        db.execute(
-            select(Complaint.sentiment, func.count())
-            .where(in_window, Complaint.sentiment.is_not(None))
-            .group_by(Complaint.sentiment)
-        ).all()
-    )
-
-    # ---------------- high-priority open complaints ----------------
-    rank = func.instr("LowMediumHighCritical", Complaint.priority)
-    hot = db.scalars(
-        select(Complaint)
-        .where(Complaint.status != "Resolved", Complaint.priority.in_(("High", "Critical")))
-        .order_by(rank.desc(), Complaint.created_at.desc())
-        .limit(8)
-    ).all()
-
-    emerging = emerging_issues(db, now)
+    sentiment_dist = await q.sentiment_distribution(db, since)
+    hot = await q.open_high_priority(db)
+    emerging = await emerging_issues(db, now)
     return {
         "window_days": days,
         "generated_at": now.isoformat(),
         "kpis": current,
-        "trend": trend,
-        "categories": breakdown(Complaint.category),
-        "intents": breakdown(Complaint.intent, limit=10),
-        "channels": breakdown(Complaint.channel),
-        "priorities": breakdown(Complaint.priority),
-        "sentiment": [{"name": s, "count": sentiment_dist.get(s, 0)} for s in SENTIMENTS],
+        "trend": await q.daily_trend(db, since),
+        "categories": await q.breakdown(db, Complaint.category, since),
+        "intents": await q.breakdown(db, Complaint.intent, since, limit=10),
+        "channels": await q.breakdown(db, Complaint.channel, since),
+        "priorities": await q.breakdown(db, Complaint.priority, since),
+        "sentiment": [{"name": s, "count": sentiment_dist.get(s, 0)} for s in q.SENTIMENTS],
         "high_priority_open": [
             {
                 "id": c.id,
@@ -186,21 +74,9 @@ def dashboard(db: Session, days: int = 30, now: datetime | None = None) -> dict[
     }
 
 
-def emerging_issues(db: Session, now: datetime, min_count: int = 20) -> list[dict[str, Any]]:
+async def emerging_issues(db: AsyncSession, now: datetime, min_count: int = 20) -> list[dict[str, Any]]:
     """Week-over-week change per category (last 7 days vs the 7 days before)."""
-    week = now - timedelta(days=7)
-    two_weeks = now - timedelta(days=14)
-    rows = db.execute(
-        select(
-            Complaint.category,
-            func.sum(case((Complaint.created_at >= week, 1), else_=0)),
-            func.sum(case((Complaint.created_at < week, 1), else_=0)),
-            func.sum(case(((Complaint.created_at >= week) & Complaint.sentiment.in_(NEGATIVE), 1), else_=0)),
-            func.sum(case(((Complaint.created_at >= week) & Complaint.sentiment.is_not(None), 1), else_=0)),
-        )
-        .where(Complaint.created_at >= two_weeks, Complaint.category.is_not(None))
-        .group_by(Complaint.category)
-    ).all()
+    rows = await q.week_over_week(db, now - timedelta(days=7), now - timedelta(days=14))
     out = []
     for name, this_week, last_week, neg, scored in rows:
         this_week, last_week = this_week or 0, last_week or 0
@@ -215,7 +91,7 @@ def emerging_issues(db: Session, now: datetime, min_count: int = 20) -> list[dic
                 "negative_share": round((neg or 0) / scored, 4) if scored else None,
             }
         )
-    return sorted(out, key=lambda r: (r["change_pct"] is None, -(r["change_pct"] or 0)))
+    return sorted(out, key=lambda r: (r["change_pct"] is None, -(r["change_pct"] or 0), r["category"]))
 
 
 def build_insights(kpis: dict[str, Any], emerging: list[dict[str, Any]]) -> list[str]:

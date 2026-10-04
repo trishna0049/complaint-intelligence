@@ -1,6 +1,8 @@
 """Import the historical dataset into the complaints table (idempotent).
 
-* Rows are keyed on the dataset's `Unique id`; re-running skips rows already imported.
+* Rows are keyed on the dataset's `Unique id`; re-running skips rows already imported (pre-filtered, and
+  `ON CONFLICT DO NOTHING` guards against a concurrent run).
+* Inserted in batches (default 5,000 rows per transaction), so a failure loses at most one batch.
 * Category / intent come from the dataset's own labels (labels_from='dataset').
 * Sentiment comes from the offline Hugging Face run (ml/artifacts/sentiment_predictions.csv) when present.
 * Priority uses the same rules as live complaints (category, sentiment, amount, text cues).
@@ -14,16 +16,18 @@ Usage:  python -m scripts.import_dataset [--csv PATH] [--limit N]
 from __future__ import annotations
 
 import argparse
+import asyncio
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
-from sqlalchemy import func, insert, select
+from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert
 
 from app.ai.priority import decide_priority
-from app.config import REPO_DIR, get_settings
-from app.db import SessionLocal, init_db
+from app.core.config import REPO_DIR, get_settings
+from app.core.db import SessionLocal, dispose_engine
 from app.models import Complaint
 
 TS = "%d/%m/%Y %H:%M"
@@ -50,9 +54,8 @@ def day_shift(latest: datetime, now: datetime) -> timedelta:
     return timedelta(days=(now.date() - latest.date()).days - 1)
 
 
-def run(csv_path: Path, limit: int | None = None, shift_to_now: bool = True, batch: int = 5000) -> int:
+async def run(csv_path: Path, limit: int | None = None, shift_to_now: bool = True, batch: int = 5000) -> int:
     started = time.perf_counter()
-    init_db()
     df = pd.read_csv(csv_path, nrows=limit)
     df["reported"] = pd.to_datetime(df["Issue_reported at"], format=TS, errors="coerce")
     df["responded"] = pd.to_datetime(df["issue_responded"], format=TS, errors="coerce")
@@ -71,9 +74,10 @@ def run(csv_path: Path, limit: int | None = None, shift_to_now: bool = True, bat
     latest = df["reported"].max().to_pydatetime().replace(tzinfo=UTC)
     shift = day_shift(latest, now) if shift_to_now else timedelta(0)
 
-    with SessionLocal() as db:
-        existing = set(db.scalars(select(Complaint.external_id).where(Complaint.external_id.is_not(None))))
-        next_id = (db.scalar(select(func.max(Complaint.id))) or 0) + 1
+    async with SessionLocal() as db:
+        existing = set(
+            (await db.scalars(select(Complaint.external_id).where(Complaint.external_id.is_not(None)))).all()
+        )
         todo = df[~df["Unique id"].isin(existing)]
         rows = []
         for r in todo.rename(columns=COLUMNS).itertuples(index=False):
@@ -86,7 +90,6 @@ def run(csv_path: Path, limit: int | None = None, shift_to_now: bool = True, bat
                 responded = None  # negative response times in the source are invalid
             rows.append(
                 {
-                    "reference": f"CMP-{next_id:06d}",
                     "external_id": r.uid,
                     "source": "dataset",
                     "subject": f"{r.intent} — {r.category}",
@@ -116,16 +119,20 @@ def run(csv_path: Path, limit: int | None = None, shift_to_now: bool = True, bat
                     "model_version": None,
                 }
             )
-            next_id += 1
+        inserted = 0  # rows actually written (a concurrent run may have inserted some)
         for i in range(0, len(rows), batch):
-            db.execute(insert(Complaint), rows[i : i + batch])
-            db.commit()
+            stmt = (
+                insert(Complaint).on_conflict_do_nothing(index_elements=[Complaint.external_id]).returning(Complaint.id)
+            )
+            result = await db.execute(stmt, rows[i : i + batch])
+            inserted += len(result.all())
+            await db.commit()
             print(f"imported {min(i + batch, len(rows)):,} / {len(rows):,}")
+    await dispose_engine()
     print(
-        f"done: {len(rows):,} new rows ({len(df) - len(rows):,} already present) "
-        f"in {time.perf_counter() - started:.1f}s"
+        f"done: {inserted:,} new rows ({len(df) - len(rows):,} already present) in {time.perf_counter() - started:.1f}s"
     )
-    return len(rows)
+    return inserted
 
 
 def main() -> None:
@@ -133,8 +140,9 @@ def main() -> None:
     parser.add_argument("--csv", default=str(REPO_DIR / "data" / "ecommerce_support.csv"))
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--no-shift", action="store_true", help="keep the original 2023 timestamps")
+    parser.add_argument("--batch", type=int, default=5000)
     args = parser.parse_args()
-    run(Path(args.csv), args.limit, shift_to_now=not args.no_shift)
+    asyncio.run(run(Path(args.csv), args.limit, shift_to_now=not args.no_shift, batch=args.batch))
 
 
 if __name__ == "__main__":

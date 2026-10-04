@@ -1,7 +1,8 @@
 /**
- * End-to-end test config. Playwright starts its own API and web servers on separate ports with a
- * separate SQLite file (var/e2e.db) and the mock LLM, so a run never touches the demo database or
- * calls OpenAI. Requires the trained classifier (`.\scripts\dev.ps1 train`) and backend/.venv.
+ * End-to-end test config. Playwright starts its own API and web servers on separate ports, against a
+ * separate PostgreSQL database (complaints_e2e, wiped and migrated on every run) and the mock LLM, so a run
+ * never touches the demo database or calls OpenAI. Requires the Compose infrastructure
+ * (`.\scripts\dev.ps1 up`), the trained classifier (`.\scripts\dev.ps1 train`) and backend/.venv.
  */
 import { defineConfig, devices } from "@playwright/test";
 import path from "node:path";
@@ -13,6 +14,8 @@ process.env.PLAYWRIGHT_BROWSERS_PATH ??= path.join(root, ".pw-browsers");
 const API_PORT = process.env.E2E_API_PORT ?? "18100";
 const WEB_PORT = process.env.E2E_WEB_PORT ?? "15200";
 const python = path.join(root, "backend", ".venv", process.platform === "win32" ? "Scripts/python.exe" : "bin/python");
+const PG = `${process.env.POSTGRES_USER ?? "complaint"}:${process.env.POSTGRES_PASSWORD ?? "complaint_dev_pw"}@localhost:${process.env.POSTGRES_PORT ?? "15432"}`;
+const E2E_DB = process.env.E2E_DATABASE_URL ?? `postgresql+asyncpg://${PG}/complaints_e2e`;
 
 export default defineConfig({
   testDir: ".",
@@ -31,13 +34,13 @@ export default defineConfig({
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"], viewport: { width: 1440, height: 1000 } } }],
   webServer: [
     {
-      command: `"${python}" -m uvicorn app.main:app --port ${API_PORT}`,
+      command: `"${python}" -m scripts.prepare_db --reset && "${python}" -m uvicorn app.main:app --port ${API_PORT}`,
       cwd: path.join(root, "backend"),
       url: `http://localhost:${API_PORT}/api/health`,
       timeout: 180_000, // first start loads the Hugging Face sentiment model
       reuseExistingServer: false,
       env: {
-        DATABASE_URL: `sqlite:///${path.join(root, "var", "e2e.db").replace(/\\/g, "/")}`,
+        DATABASE_URL: E2E_DB,
         LLM_PROVIDER: "mock",
         OPENAI_API_KEY: "",
         CORS_ORIGINS: `http://localhost:${WEB_PORT}`,

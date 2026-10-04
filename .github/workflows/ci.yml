@@ -10,6 +10,23 @@ jobs:
     runs-on: ubuntu-latest
     env:
       ENABLE_TRANSFORMERS: "false"   # tests use the lexicon fallback; no model download in CI
+      TEST_DATABASE_URL: postgresql+asyncpg://complaint:complaint_ci_pw@localhost:5432/complaints_test
+      REDIS_URL: redis://localhost:6379/15
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: complaint
+          POSTGRES_PASSWORD: complaint_ci_pw
+          POSTGRES_DB: complaints_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U complaint -d complaints_test" --health-interval 5s --health-timeout 3s
+          --health-retries 20
+      redis:
+        image: redis:7.4-alpine
+        ports: ["6379:6379"]
+        options: --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

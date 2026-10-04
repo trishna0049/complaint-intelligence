@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 
 from app.ai.keywords import blend_with_prior
-from app.config import get_settings
+from app.core.config import get_settings
 
 log = logging.getLogger(__name__)
 

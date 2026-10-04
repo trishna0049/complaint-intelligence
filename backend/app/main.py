@@ -12,19 +12,21 @@ from app.ai.classifier import get_classifier
 from app.ai.llm import LLMError
 from app.ai.sentiment import load_sentiment
 from app.api.routes import router
-from app.config import get_settings
-from app.db import init_db
+from app.core.config import get_settings
+from app.core.db import dispose_engine
+from app.core.redis import close_redis
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-    init_db()
-    # Warm the models so the first complaint isn't slow.
+    # Warm the models so the first complaint isn't slow. The schema is managed by Alembic (not created here).
     get_classifier()
     load_sentiment()
     yield
+    await dispose_engine()
+    await close_redis()
 
 
 def create_app() -> FastAPI:

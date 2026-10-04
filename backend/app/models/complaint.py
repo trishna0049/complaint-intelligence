@@ -1,40 +1,27 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 
-from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text
-from sqlalchemy.engine import Dialect
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, Sequence, String, Text, func, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.types import TypeDecorator
 
-from app.db import Base
+from app.core.db import Base
 
-
-def utcnow() -> datetime:
-    return datetime.now(UTC)
-
-
-class UTCDateTime(TypeDecorator[datetime]):
-    """Stored as naive UTC (SQLite has no time zones), always returned timezone-aware."""
-
-    impl = DateTime
-    cache_ok = True
-
-    def process_bind_param(self, value: datetime | None, dialect: Dialect) -> datetime | None:
-        if value is not None and value.tzinfo is not None:
-            value = value.astimezone(UTC).replace(tzinfo=None)
-        return value
-
-    def process_result_value(self, value: datetime | None, dialect: Dialect) -> datetime | None:
-        return value.replace(tzinfo=UTC) if value is not None else None
+# Human-readable reference numbers come from a sequence so concurrent inserts never collide.
+REFERENCE_SEQ = Sequence("complaint_reference_seq", start=1, metadata=Base.metadata)
 
 
 class Complaint(Base):
     __tablename__ = "complaints"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    reference: Mapped[str] = mapped_column(String(16), unique=True, index=True)  # CMP-000123
+    reference: Mapped[str] = mapped_column(
+        String(16),
+        unique=True,
+        server_default=text("'CMP-' || lpad(nextval('complaint_reference_seq')::text, 6, '0')"),
+    )
     external_id: Mapped[str | None] = mapped_column(String(64), unique=True)  # dataset "Unique id"
     source: Mapped[str] = mapped_column(String(16), default="new")  # "dataset" | "new"
 
@@ -49,8 +36,8 @@ class Complaint(Base):
     city: Mapped[str | None] = mapped_column(String(120))
     status: Mapped[str] = mapped_column(String(16), default="Open", index=True)  # Open | In Progress | Resolved
     csat_score: Mapped[int | None] = mapped_column(Integer)
-    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow, index=True)
-    resolved_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     # --- AI triage ---
     category: Mapped[str | None] = mapped_column(String(64), index=True)
@@ -60,15 +47,15 @@ class Complaint(Base):
     sentiment: Mapped[str | None] = mapped_column(String(16), index=True)
     sentiment_score: Mapped[float | None] = mapped_column(Float)  # 1 (very negative) .. 5 (very positive)
     priority: Mapped[str] = mapped_column(String(16), default="Medium", index=True)
-    priority_reasons: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON)
-    entities: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    priority_reasons: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)
+    entities: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     needs_review: Mapped[bool] = mapped_column(Boolean, default=False)
     # "model" for live triage; "dataset" when labels come from the source data (imported history)
     labels_from: Mapped[str] = mapped_column(String(16), default="model")
     model_version: Mapped[str | None] = mapped_column(String(64))
 
     insights: Mapped[list[AIInsight]] = relationship(
-        back_populates="complaint", cascade="all, delete-orphan", order_by="AIInsight.id.desc()"
+        back_populates="complaint", cascade="all, delete-orphan", order_by="AIInsight.id.desc()", lazy="selectin"
     )
 
     __table_args__ = (Index("ix_complaints_created_category", "created_at", "category"),)
@@ -82,14 +69,14 @@ class AIInsight(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     complaint_id: Mapped[int] = mapped_column(ForeignKey("complaints.id", ondelete="CASCADE"), index=True)
     summary: Mapped[str] = mapped_column(Text)
-    key_issues: Mapped[list[str]] = mapped_column(JSON)
-    recommended_actions: Mapped[list[str]] = mapped_column(JSON)
+    key_issues: Mapped[list[str]] = mapped_column(JSONB)
+    recommended_actions: Mapped[list[str]] = mapped_column(JSONB)
     customer_reply: Mapped[str] = mapped_column(Text)
     provider: Mapped[str] = mapped_column(String(16))
     model: Mapped[str] = mapped_column(String(64))
     prompt_version: Mapped[str] = mapped_column(String(16))
     # Token usage and estimated cost for real LLM calls (None for the mock provider).
-    usage: Mapped[dict[str, Any] | None] = mapped_column(JSON(none_as_null=True))
-    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
+    usage: Mapped[dict[str, Any] | None] = mapped_column(JSONB(none_as_null=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     complaint: Mapped[Complaint] = relationship(back_populates="insights")

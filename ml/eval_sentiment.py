@@ -32,7 +32,7 @@ from scipy.stats import spearmanr  # noqa: E402
 from sklearn.metrics import confusion_matrix, precision_recall_fscore_support  # noqa: E402
 
 from app.ai.sentiment import LABELS, TransformerSentiment  # noqa: E402
-from app.config import get_settings  # noqa: E402
+from app.core.config import get_settings  # noqa: E402
 
 ARTIFACTS = ROOT / "ml" / "artifacts"
 REPORTS = ROOT / "ml" / "reports"

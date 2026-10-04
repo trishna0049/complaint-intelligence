@@ -7,15 +7,20 @@ from typing import Annotated, Literal
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
-BACKEND_DIR = Path(__file__).resolve().parents[1]
+BACKEND_DIR = Path(__file__).resolve().parents[2]
 REPO_DIR = BACKEND_DIR.parent
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=str(REPO_DIR / ".env"), env_file_encoding="utf-8", extra="ignore")
 
-    database_url: str = f"sqlite:///{(REPO_DIR / 'var' / 'complaints.db').as_posix()}"
-    cors_origins: Annotated[list[str], NoDecode] = Field(default_factory=lambda: ["http://localhost:5173"])
+    environment: Literal["development", "test", "production"] = "development"
+
+    # --- data stores ---
+    database_url: str = "postgresql+asyncpg://complaint:complaint_dev_pw@localhost:15432/complaints"
+    database_pool_size: int = 10
+    redis_url: str = "redis://localhost:16379/0"
+    cors_origins: Annotated[list[str], NoDecode] = Field(default_factory=lambda: ["http://localhost:15173"])
 
     # --- AI ---
     llm_provider: Literal["mock", "openai"] = "mock"

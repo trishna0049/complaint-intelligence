@@ -1,6 +1,7 @@
 # Architecture
 
-A deliberately small system: one FastAPI service, one SQLite file, one React app. All AI runs in-process.
+One FastAPI service on async SQLAlchemy 2, PostgreSQL 16 (+ pgvector) and Redis in Docker Compose, one React app.
+All AI runs in-process. (This document is rewritten in full as the platform grows; see docs/GAP_REPORT.md.)
 
 ```mermaid
 flowchart LR
@@ -12,7 +13,8 @@ flowchart LR
     T --> P["Priority rules<br/>(raise-only)"]
     API --> L["Insights (LLM)<br/>OpenAI structured output · Mock"]
     L -. "PII masked first" .-> OAI(("OpenAI API"))
-    API --> DB[("SQLite<br/>complaints, ai_insights")]
+    API --> DB[("PostgreSQL 16<br/>complaints, ai_insights")]
+    D --> R[("Redis<br/>analytics cache")]
     API --> D["Dashboard SQL aggregates"]
     D --> DB
 ```
@@ -26,7 +28,7 @@ sequenceDiagram
     participant UI
     participant API as FastAPI
     participant AI as Triage pipeline
-    participant DB as SQLite
+    participant DB as PostgreSQL
     UI->>API: complaint text + optional order/amount/product
     API->>AI: extract entities → classify category & intent → sentiment → priority rules
     AI-->>API: labels, confidences, entities, rule trace, model version
@@ -64,5 +66,5 @@ aggregates.
   automatically.
 - **Works offline.** `LLM_PROVIDER=mock` produces realistic insights from the triage results without a key;
   setting `LLM_PROVIDER=openai` and `OPENAI_API_KEY` switches to the real API with structured outputs.
-- **SQLite** keeps setup to `pip install` + `npm install`. The SQLAlchemy models are portable to Postgres by
-  changing `DATABASE_URL`.
+- **PostgreSQL + Alembic.** The schema is versioned with Alembic migrations (`backend/migrations`); the backend
+  uses async SQLAlchemy 2 with asyncpg. CPU-bound model inference runs in worker threads off the event loop.

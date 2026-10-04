@@ -10,7 +10,7 @@ from app.ai.classifier import ComplaintClassifier, get_classifier
 from app.ai.entities import extract_entities
 from app.ai.priority import decide_priority
 from app.ai.sentiment import load_sentiment
-from app.config import get_settings
+from app.core.config import get_settings
 
 
 @dataclass
