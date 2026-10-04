@@ -8,9 +8,9 @@ export interface Page<T> {
   page_size: number;
 }
 
-export interface Complaint {
+export interface Ticket {
   id: number;
-  reference: string;
+  ticket_number: string;
   subject: string;
   channel: string;
   status: Status;
@@ -21,7 +21,7 @@ export interface Complaint {
   category_confidence: number | null;
   needs_review: boolean;
   source: "dataset" | "new";
-  text_is_template: boolean;
+  description_source: "customer" | "dataset_remark" | "template";
   customer_name: string | null;
   city: string | null;
   created_at: string;
@@ -43,26 +43,44 @@ export interface PriorityReason {
   to: string;
 }
 
-export interface Insight {
+export interface Usage {
+  model: string | null;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  estimated_cost_usd: number;
+  latency_s: number;
+}
+
+/** One AI run on a ticket: "triage" (classification) or "copilot" (triage snapshot + LLM output). */
+export interface Analysis {
   id: number;
-  summary: string;
-  key_issues: string[];
-  recommended_actions: string[];
-  customer_reply: string;
-  provider: string;
-  model: string;
-  prompt_version: string;
-  usage: { model: string | null; prompt_tokens: number; completion_tokens: number; total_tokens: number;
-    estimated_cost_usd: number; latency_s: number } | null;
+  kind: "triage" | "copilot";
+  category: string | null;
+  intent: string | null;
+  sentiment: string | null;
+  priority: Priority | null;
+  confidence: number | null;
+  summary: string | null;
+  key_issues: string[] | null;
+  recommendations: string[] | null;
+  draft_response: string | null;
+  provider: string | null;
+  model: string | null;
+  model_version: string | null;
+  prompt_version: string | null;
+  usage: Usage | null;
   created_at: string;
 }
 
-export interface ComplaintDetail extends Complaint {
-  text: string;
+export interface TicketDetail extends Ticket {
+  description: string;
   order_id: string | null;
   product: string | null;
   amount_inr: number | null;
   csat_score: number | null;
+  updated_at: string;
+  first_response_at: string | null;
   resolved_at: string | null;
   intent_confidence: number | null;
   sentiment_score: number | null;
@@ -70,12 +88,12 @@ export interface ComplaintDetail extends Complaint {
   entities: Entities | null;
   labels_from: "model" | "dataset" | "human";
   model_version: string | null;
-  insight: Insight | null;
+  copilot: Analysis | null;
 }
 
-export interface ComplaintInput {
+export interface TicketInput {
   subject?: string;
-  text: string;
+  description: string;
   channel: string;
   customer_name?: string;
   order_id?: string;
@@ -102,7 +120,7 @@ export interface TriagePreview {
 export interface Breakdown {
   name: string;
   count: number;
-  negative_share: number;
+  negative_share: number | null;
   high_priority: number;
 }
 
@@ -118,29 +136,55 @@ export interface TrendPoint {
   avg_csat: number | null;
 }
 
-export interface Dashboard {
+export interface Kpis {
+  total: number;
+  open: number;
+  high_priority: number;
+  critical: number;
+  negative_share: number | null;
+  avg_csat: number | null;
+  avg_sentiment_score: number | null;
+  total_change_pct: number | null;
+  high_priority_change_pct: number | null;
+  needs_review: number;
+  open_high_priority: number;
+}
+
+export interface Overview {
   window_days: number;
   generated_at: string;
-  kpis: {
-    total: number;
-    open: number;
-    high_priority: number;
-    critical: number;
-    negative_share: number | null;
-    avg_csat: number | null;
-    avg_sentiment_score: number | null;
-    total_change_pct: number | null;
-    high_priority_change_pct: number | null;
-    needs_review: number;
-    open_high_priority: number;
-  };
-  trend: TrendPoint[];
+  kpis: Kpis;
+  high_priority_open: { id: number; ticket_number: string; subject: string; category: string | null; priority: Priority;
+    sentiment: string | null; created_at: string }[];
+  insights: string[];
+}
+
+export type Granularity = "day" | "week" | "month";
+
+export interface Trends {
+  window_days: number;
+  granularity: Granularity;
+  points: TrendPoint[];
+}
+
+export interface CategoryBreakdowns {
+  window_days: number;
   categories: Breakdown[];
   intents: Breakdown[];
   channels: Breakdown[];
   priorities: Breakdown[];
   sentiment: { name: string; count: number }[];
-  high_priority_open: { id: number; reference: string; subject: string; category: string | null; priority: Priority; sentiment: string | null; created_at: string }[];
-  emerging: { category: string; this_week: number; last_week: number; change_pct: number | null; negative_share: number | null }[];
-  insights: string[];
+}
+
+export interface EmergingIssue {
+  category: string;
+  this_week: number;
+  last_week: number;
+  change_pct: number | null;
+  negative_share: number | null;
+}
+
+export interface Emerging {
+  generated_at: string;
+  emerging: EmergingIssue[];
 }

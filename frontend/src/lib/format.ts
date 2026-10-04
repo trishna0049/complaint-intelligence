@@ -10,6 +10,11 @@ export function fmtDate(iso: string | null | undefined): string {
   return format(new Date(iso), "d MMM yyyy");
 }
 
+export function fmtMonth(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  return format(new Date(iso), "MMM yyyy");
+}
+
 export function fmtRelative(iso: string | null | undefined): string {
   if (!iso) return "—";
   return `${formatDistanceToNowStrict(new Date(iso))} ago`;

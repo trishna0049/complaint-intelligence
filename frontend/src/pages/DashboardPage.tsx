@@ -13,66 +13,67 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { useDashboard } from "@/api/client";
-import type { Breakdown } from "@/api/types";
+import { useCategoryBreakdowns, useEmerging, useOverview, useTrends } from "@/api/client";
+import type { Breakdown, EmergingIssue, Granularity } from "@/api/types";
 import { PriorityBadge, SentimentBadge } from "@/components/Badges";
 import { SENTIMENT_COLORS, SENTIMENTS } from "@/lib/colors";
 import { Card, CardHeader, EmptyState, ErrorState, PageHeader, Skeleton } from "@/components/ui";
-import { fmtDate, pct } from "@/lib/format";
+import { fmtDate, fmtMonth, pct } from "@/lib/format";
 
 // Chart chrome (recessive): hairline grid, muted axis ink.
 const GRID = "#e1e0d9";
 const AXIS = "#898781";
 const SERIES_1 = "#2a78d6"; // blue — total volume / single-series bars
 const SERIES_2 = "#eb6834"; // orange — high-priority volume
-const RANGES = [7, 30, 90] as const;
+const RANGES = [7, 30, 90];
+const GRANULARITIES: Granularity[] = ["day", "week", "month"];
 
 const axisProps = { stroke: AXIS, fontSize: 11, tickLine: false, axisLine: { stroke: "#c3c2b7" } };
 const tooltipStyle = { fontSize: 12, borderRadius: 8, border: "1px solid rgba(11,11,11,0.10)", boxShadow: "0 4px 12px rgba(0,0,0,0.08)" };
 
 export function DashboardPage() {
   const [days, setDays] = useState<number>(30);
-  const { data, isLoading, error, refetch, isFetching } = useDashboard(days);
+  const [granularity, setGranularity] = useState<Granularity>("day");
+  const overview = useOverview(days);
+  const trends = useTrends(days, granularity);
+  const breakdowns = useCategoryBreakdowns(days);
+  const emerging = useEmerging();
+  const data = overview.data;
+  const refetchAll = () => {
+    void overview.refetch();
+    void trends.refetch();
+    void breakdowns.refetch();
+    void emerging.refetch();
+  };
+  const firstError = overview.error ?? trends.error ?? breakdowns.error ?? emerging.error;
+  const fmtBucket = (d: string) => (granularity === "month" ? fmtMonth(d) : fmtDate(d).slice(0, 6));
 
   return (
     <>
       <PageHeader
         title="Complaint dashboard"
-        description="Volumes, sentiment and high-priority issues across all complaints."
-        actions={
-          <div className="flex rounded-md border border-slate-200 bg-white p-0.5 shadow-sm" role="group" aria-label="Time range">
-            {RANGES.map((r) => (
-              <button
-                key={r}
-                onClick={() => setDays(r)}
-                className={`rounded px-3 py-1 text-sm font-medium ${days === r ? "bg-brand-600 text-white" : "text-slate-600 hover:bg-slate-100"}`}
-                aria-pressed={days === r}
-              >
-                {r}d
-              </button>
-            ))}
-          </div>
-        }
+        description="Volumes, sentiment and high-priority issues across all tickets."
+        actions={<Segmented label="Time range" options={RANGES.map((r) => ({ value: r, label: `${r}d` }))} value={days} onChange={setDays} />}
       />
-      {error ? (
-        <Card><ErrorState error={error} onRetry={() => void refetch()} /></Card>
-      ) : isLoading || !data ? (
+      {firstError ? (
+        <Card><ErrorState error={firstError} onRetry={refetchAll} /></Card>
+      ) : overview.isLoading || !data ? (
         <DashboardSkeleton />
       ) : data.kpis.total === 0 ? (
         <Card>
           <EmptyState
-            title="No complaints in this period"
-            description="Import the dataset (scripts\\dev.ps1 import) or log a new complaint."
-            action={<Link to="/complaints/new" className="text-sm font-medium text-brand-600 hover:underline">New complaint</Link>}
+            title="No tickets in this period"
+            description="Import the dataset (scripts\dev.ps1 import) or create a ticket."
+            action={<Link to="/tickets/new" className="text-sm font-medium text-brand-600 hover:underline">Create ticket</Link>}
           />
         </Card>
       ) : (
-        <div className={`space-y-5 transition-opacity ${isFetching ? "opacity-70" : ""}`}>
+        <div className={`space-y-5 transition-opacity ${overview.isFetching ? "opacity-70" : ""}`}>
           <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
-            <Kpi label="Complaints" value={data.kpis.total.toLocaleString()} change={data.kpis.total_change_pct} sub={`last ${days} days`} />
+            <Kpi label="Tickets" value={data.kpis.total.toLocaleString()} change={data.kpis.total_change_pct} sub={`last ${days} days`} />
             <Kpi label="High / critical" value={data.kpis.high_priority.toLocaleString()} change={data.kpis.high_priority_change_pct} invert
               sub={`${data.kpis.critical.toLocaleString()} critical`} />
-            <Kpi label="Negative sentiment" value={pct(data.kpis.negative_share)} sub="of scored complaints" />
+            <Kpi label="Negative sentiment" value={pct(data.kpis.negative_share)} sub="of scored tickets" />
             <Kpi label="Average CSAT" value={data.kpis.avg_csat?.toFixed(2) ?? "—"} sub="out of 5" />
             <Kpi label="Open high-priority" value={data.kpis.open_high_priority.toLocaleString()} sub={`${data.kpis.needs_review} need AI review`} alert={data.kpis.open_high_priority > 0} />
           </div>
@@ -87,70 +88,77 @@ export function DashboardPage() {
           </Card>
 
           <div className="grid gap-5 xl:grid-cols-2">
-            <ChartCard title="Complaint volume" subtitle="Per day — all complaints vs high/critical priority">
-              <ResponsiveContainer width="100%" height={260}>
-                <LineChart data={data.trend} margin={{ top: 8, right: 16, bottom: 0, left: -8 }}>
-                  <CartesianGrid stroke={GRID} vertical={false} />
-                  <XAxis dataKey="date" {...axisProps} tickFormatter={(d: string) => fmtDate(d).slice(0, 6)} minTickGap={24} />
-                  <YAxis {...axisProps} allowDecimals={false} />
-                  <Tooltip contentStyle={tooltipStyle} labelFormatter={(d) => fmtDate(String(d))} />
-                  <Legend iconType="plainline" wrapperStyle={{ fontSize: 12 }} />
-                  <Line type="monotone" dataKey="total" name="All complaints" stroke={SERIES_1} strokeWidth={2} dot={false} activeDot={{ r: 4 }} />
-                  <Line type="monotone" dataKey="high_priority" name="High / critical" stroke={SERIES_2} strokeWidth={2} dot={false} activeDot={{ r: 4 }} />
-                </LineChart>
-              </ResponsiveContainer>
+            <ChartCard title="Ticket volume" subtitle={`Per ${granularity} — all tickets vs high/critical priority`}
+              actions={<Segmented label="Granularity" options={GRANULARITIES.map((g) => ({ value: g, label: g[0].toUpperCase() + g.slice(1) }))} value={granularity} onChange={setGranularity} small />}>
+              {!trends.data ? <Skeleton className="h-[260px]" /> : (
+                <ResponsiveContainer width="100%" height={260}>
+                  <LineChart data={trends.data.points} margin={{ top: 8, right: 16, bottom: 0, left: -8 }}>
+                    <CartesianGrid stroke={GRID} vertical={false} />
+                    <XAxis dataKey="date" {...axisProps} tickFormatter={fmtBucket} minTickGap={24} />
+                    <YAxis {...axisProps} allowDecimals={false} />
+                    <Tooltip contentStyle={tooltipStyle} labelFormatter={(d) => fmtBucket(String(d))} />
+                    <Legend iconType="plainline" wrapperStyle={{ fontSize: 12 }} />
+                    <Line type="monotone" dataKey="total" name="All tickets" stroke={SERIES_1} strokeWidth={2} dot={granularity !== "day"} activeDot={{ r: 4 }} />
+                    <Line type="monotone" dataKey="high_priority" name="High / critical" stroke={SERIES_2} strokeWidth={2} dot={granularity !== "day"} activeDot={{ r: 4 }} />
+                  </LineChart>
+                </ResponsiveContainer>
+              )}
             </ChartCard>
 
-            <ChartCard title="Sentiment trend" subtitle="Per day, complaints with a sentiment score (Hugging Face model)">
-              <ResponsiveContainer width="100%" height={260}>
-                <BarChart data={data.trend} margin={{ top: 8, right: 16, bottom: 0, left: -8 }} barCategoryGap={2}>
-                  <CartesianGrid stroke={GRID} vertical={false} />
-                  <XAxis dataKey="date" {...axisProps} tickFormatter={(d: string) => fmtDate(d).slice(0, 6)} minTickGap={24} />
-                  <YAxis {...axisProps} allowDecimals={false} />
-                  <Tooltip contentStyle={tooltipStyle} labelFormatter={(d) => fmtDate(String(d))} cursor={{ fill: "rgba(0,0,0,0.04)" }} />
-                  <Legend wrapperStyle={{ fontSize: 12 }} />
-                  {SENTIMENTS.map((s, i) => (
-                    <Bar key={s} dataKey={s} stackId="s" fill={SENTIMENT_COLORS[s]} stroke="#fcfcfb" strokeWidth={1}
-                      radius={i === SENTIMENTS.length - 1 ? [3, 3, 0, 0] : 0} />
-                  ))}
-                </BarChart>
-              </ResponsiveContainer>
+            <ChartCard title="Sentiment trend" subtitle={`Per ${granularity}, tickets with a sentiment score (Hugging Face model)`}>
+              {!trends.data ? <Skeleton className="h-[260px]" /> : (
+                <ResponsiveContainer width="100%" height={260}>
+                  <BarChart data={trends.data.points} margin={{ top: 8, right: 16, bottom: 0, left: -8 }} barCategoryGap={2}>
+                    <CartesianGrid stroke={GRID} vertical={false} />
+                    <XAxis dataKey="date" {...axisProps} tickFormatter={fmtBucket} minTickGap={24} />
+                    <YAxis {...axisProps} allowDecimals={false} />
+                    <Tooltip contentStyle={tooltipStyle} labelFormatter={(d) => fmtBucket(String(d))} cursor={{ fill: "rgba(0,0,0,0.04)" }} />
+                    <Legend wrapperStyle={{ fontSize: 12 }} />
+                    {SENTIMENTS.map((s, i) => (
+                      <Bar key={s} dataKey={s} stackId="s" fill={SENTIMENT_COLORS[s]} stroke="#fcfcfb" strokeWidth={1}
+                        radius={i === SENTIMENTS.length - 1 ? [3, 3, 0, 0] : 0} />
+                    ))}
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
             </ChartCard>
           </div>
 
           <div className="grid gap-5 xl:grid-cols-3">
-            <ChartCard title="Complaints by category" subtitle="Hover for negative-sentiment share" className="xl:col-span-2">
-              <HorizontalBars rows={data.categories} height={Math.max(220, data.categories.length * 26)} />
+            <ChartCard title="Tickets by category" subtitle="Hover for negative-sentiment share" className="xl:col-span-2">
+              {!breakdowns.data ? <Skeleton className="h-[260px]" /> : (
+                <HorizontalBars rows={breakdowns.data.categories} height={Math.max(220, breakdowns.data.categories.length * 26)} />
+              )}
             </ChartCard>
             <ChartCard title="Sentiment mix" subtitle={`Last ${days} days`}>
-              <SentimentMix rows={data.sentiment} />
+              {!breakdowns.data ? <Skeleton className="h-[200px]" /> : <SentimentMix rows={breakdowns.data.sentiment} />}
             </ChartCard>
           </div>
 
           <div className="grid gap-5 xl:grid-cols-3">
             <ChartCard title="Top intents" subtitle="Sub-category of the complaint">
-              <HorizontalBars rows={data.intents} height={300} compact />
+              {!breakdowns.data ? <Skeleton className="h-[300px]" /> : <HorizontalBars rows={breakdowns.data.intents} height={300} compact />}
             </ChartCard>
             <Card>
               <CardHeader title="Emerging issues" subtitle="Last 7 days vs the 7 days before" icon={<TrendingUp className="h-4 w-4" />} />
-              <EmergingTable rows={data.emerging} />
+              {!emerging.data ? <div className="p-4"><Skeleton className="h-40" /></div> : <EmergingTable rows={emerging.data.emerging} />}
             </Card>
             <Card>
-              <CardHeader title="Open high-priority complaints" icon={<AlertTriangle className="h-4 w-4 text-rose-500" />}
-                actions={<Link to="/complaints?status=Open&sort=priority" className="text-xs text-brand-600 hover:underline">View all</Link>} />
+              <CardHeader title="Open high-priority tickets" icon={<AlertTriangle className="h-4 w-4 text-rose-500" />}
+                actions={<Link to="/tickets?status=Open&sort=priority" className="text-xs text-brand-600 hover:underline">View all</Link>} />
               {data.high_priority_open.length === 0 ? (
-                <EmptyState title="Nothing urgent" description="No open high or critical complaints." />
+                <EmptyState title="Nothing urgent" description="No open high or critical tickets." />
               ) : (
                 <ul className="divide-y divide-slate-100">
                   {data.high_priority_open.map((c) => (
                     <li key={c.id}>
-                      <Link to={`/complaints/${c.id}`} className="block px-4 py-2.5 hover:bg-slate-50">
+                      <Link to={`/tickets/${c.id}`} className="block px-4 py-2.5 hover:bg-slate-50">
                         <div className="flex items-center justify-between gap-2">
                           <span className="truncate text-sm font-medium text-slate-900">{c.subject}</span>
                           <PriorityBadge priority={c.priority} />
                         </div>
                         <div className="mt-0.5 flex items-center gap-2 text-xs text-slate-500">
-                          <span className="font-mono">{c.reference}</span>
+                          <span className="font-mono">{c.ticket_number}</span>
                           <span>{c.category ?? "Uncategorised"}</span>
                           <SentimentBadge sentiment={c.sentiment} />
                         </div>
@@ -162,13 +170,34 @@ export function DashboardPage() {
             </Card>
           </div>
 
-          <div className="grid gap-5 md:grid-cols-2">
-            <ChartCard title="By channel"><SimpleTable rows={data.channels} /></ChartCard>
-            <ChartCard title="By priority"><SimpleTable rows={data.priorities} /></ChartCard>
-          </div>
+          {breakdowns.data && (
+            <div className="grid gap-5 md:grid-cols-2">
+              <ChartCard title="By channel"><SimpleTable rows={breakdowns.data.channels} /></ChartCard>
+              <ChartCard title="By priority"><SimpleTable rows={breakdowns.data.priorities} /></ChartCard>
+            </div>
+          )}
         </div>
       )}
     </>
+  );
+}
+
+function Segmented<T extends string | number>({ label, options, value, onChange, small }: {
+  label: string; options: { value: T; label: string }[]; value: T; onChange: (v: T) => void; small?: boolean;
+}) {
+  return (
+    <div className="flex rounded-md border border-slate-200 bg-white p-0.5 shadow-sm" role="group" aria-label={label}>
+      {options.map((o) => (
+        <button
+          key={String(o.value)}
+          onClick={() => onChange(o.value)}
+          className={`rounded font-medium ${small ? "px-2 py-0.5 text-xs" : "px-3 py-1 text-sm"} ${value === o.value ? "bg-brand-600 text-white" : "text-slate-600 hover:bg-slate-100"}`}
+          aria-pressed={value === o.value}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
   );
 }
 
@@ -192,10 +221,10 @@ function Kpi({ label, value, sub, change, invert, alert }: { label: string; valu
   );
 }
 
-function ChartCard({ title, subtitle, children, className }: { title: string; subtitle?: string; children: ReactNode; className?: string }) {
+function ChartCard({ title, subtitle, children, className, actions }: { title: string; subtitle?: string; children: ReactNode; className?: string; actions?: ReactNode }) {
   return (
     <Card className={className}>
-      <CardHeader title={title} subtitle={subtitle} />
+      <CardHeader title={title} subtitle={subtitle} actions={actions} />
       <div className="p-3">{children}</div>
     </Card>
   );
@@ -214,7 +243,7 @@ function HorizontalBars({ rows, height, compact }: { rows: Breakdown[]; height: 
           cursor={{ fill: "rgba(0,0,0,0.04)" }}
           formatter={(v, _n, item) => {
             const r = (item as { payload: Breakdown }).payload;
-            return [`${Number(v).toLocaleString()} complaints · ${pct(r.negative_share)} negative · ${r.high_priority.toLocaleString()} high/critical`, ""];
+            return [`${Number(v).toLocaleString()} tickets · ${pct(r.negative_share)} negative · ${r.high_priority.toLocaleString()} high/critical`, ""];
           }}
           separator=""
         />
@@ -249,7 +278,7 @@ function SentimentMix({ rows }: { rows: { name: string; count: number }[] }) {
   );
 }
 
-function EmergingTable({ rows }: { rows: { category: string; this_week: number; last_week: number; change_pct: number | null; negative_share: number | null }[] }) {
+function EmergingTable({ rows }: { rows: EmergingIssue[] }) {
   if (rows.length === 0) return <EmptyState title="Not enough data" description="Needs at least two weeks of complaints." />;
   return (
     <table className="table-base">
@@ -276,7 +305,7 @@ function SimpleTable({ rows }: { rows: Breakdown[] }) {
   const total = rows.reduce((a, r) => a + r.count, 0);
   return (
     <table className="table-base">
-      <thead><tr><th></th><th className="text-right">Complaints</th><th className="text-right">Share</th><th className="text-right">Negative</th></tr></thead>
+      <thead><tr><th></th><th className="text-right">Tickets</th><th className="text-right">Share</th><th className="text-right">Negative</th></tr></thead>
       <tbody>
         {rows.map((r) => (
           <tr key={r.name}>

@@ -48,7 +48,7 @@ backend/requirements-dev.txt`, `python ml/train_classifiers.py`, `python ml/eval
 
 ## Using it
 
-1. **Dashboard** — volume, sentiment trend, top categories and intents, emerging issues
+1. **Dashboard** — volume (per day, week or month), sentiment trend, top categories and intents, emerging issues
    (for example "Payments related complaints rose 56% this week") and the open high-priority list. Switch 7 / 30 / 90 days.
 2. **New complaint** — paste a complaint and press **Analyze** to preview the AI triage (category, intent,
    sentiment, priority with the rules that fired, extracted entities), then **Save**.
@@ -88,15 +88,17 @@ Mean CSAT rises monotonically from 2.75 (Very Negative) to 4.70 (Very Positive).
 
 ## API
 
+All routes live under `/api/v1/` (spec's API table).
+
 | Method | Path | Purpose |
 |---|---|---|
-| POST | `/api/triage` | Run the NLP pipeline on a text without saving |
-| POST | `/api/complaints` | Create a complaint (triage runs automatically) |
-| GET | `/api/complaints` | List with `q`, `status`, `category`, `sentiment`, `priority`, `channel`, `source`, `needs_review`, `sort`, `page` |
-| GET / PATCH | `/api/complaints/{id}` | Detail · update `status` or correct `category` |
-| POST | `/api/complaints/{id}/insights` | LLM summary, key issues, recommended actions, draft reply |
-| GET | `/api/dashboard?days=30` | All dashboard analytics in one call |
-| GET | `/api/health`, `/api/categories` | Model versions in use · category list |
+| POST | `/ai/analyze` | Run the NLP triage pipeline on a text without saving |
+| POST | `/tickets` | Create a ticket (`INC-00001` …); triage runs automatically and is recorded in `ai_analyses` |
+| GET | `/tickets` | List with `q`, `status`, `category`, `sentiment`, `priority`, `channel`, `source`, `needs_review`, `sort`, `page` |
+| GET / PATCH | `/tickets/{id}` | Detail · update `status` or correct `category` |
+| POST | `/ai/draft-response` | Copilot for `{ticket_id}`: LLM summary, key issues, recommended actions, draft reply |
+| GET | `/analytics/overview`, `/trends?granularity=day\|week\|month`, `/categories`, `/emerging` | Dashboard analytics (Redis-cached) |
+| GET | `/health`, `/categories` | Model versions in use · category list |
 
 Interactive docs: http://localhost:18000/docs
 

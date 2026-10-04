@@ -1,14 +1,14 @@
 import { ArrowLeft, Sparkles, Wand2 } from "lucide-react";
 import { useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { useCreateComplaint, useTriagePreview } from "@/api/client";
-import type { ComplaintInput } from "@/api/types";
+import { useAnalyze, useCreateTicket } from "@/api/client";
+import type { TicketInput } from "@/api/types";
 import { TriageView } from "@/components/TriageView";
 import { Button, Card, CardHeader, EmptyState, Field, Input, PageHeader, Select, Textarea } from "@/components/ui";
 
 const EXAMPLE = {
   subject: "Charged twice for my order",
-  text: "I was charged twice for my order of ₹12,500 and have already contacted support three times. Nobody has fixed it and I am really frustrated.",
+  description: "I was charged twice for my order of ₹12,500 and have already contacted support three times. Nobody has fixed it and I am really frustrated.",
   channel: "Email",
   customer_name: "Ravi Kumar",
   order_id: "OD48213377",
@@ -17,26 +17,26 @@ const EXAMPLE = {
   city: "Pune",
 };
 
-const EMPTY = { subject: "", text: "", channel: "Web", customer_name: "", order_id: "", product: "", amount_inr: "", city: "" };
+const EMPTY = { subject: "", description: "", channel: "Web", customer_name: "", order_id: "", product: "", amount_inr: "", city: "" };
 
-export function NewComplaintPage() {
+export function NewTicketPage() {
   const navigate = useNavigate();
   const [form, setForm] = useState(EMPTY);
   const [error, setError] = useState<string | null>(null);
-  const preview = useTriagePreview();
-  const create = useCreateComplaint();
+  const preview = useAnalyze();
+  const create = useCreateTicket();
 
   const set = (k: keyof typeof form) => (e: { target: { value: string } }) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
-  function payload(): ComplaintInput | null {
-    if (form.text.trim().length < 5) {
+  function payload(): TicketInput | null {
+    if (form.description.trim().length < 5) {
       setError("Describe the complaint (at least 5 characters).");
       return null;
     }
     setError(null);
     return {
       subject: form.subject || undefined,
-      text: form.text.trim(),
+      description: form.description.trim(),
       channel: form.channel,
       customer_name: form.customer_name || undefined,
       order_id: form.order_id || undefined,
@@ -54,17 +54,17 @@ export function NewComplaintPage() {
   function onSubmit(e: FormEvent) {
     e.preventDefault();
     const body = payload();
-    if (body) create.mutate(body, { onSuccess: (c) => navigate(`/complaints/${c.id}`) });
+    if (body) create.mutate(body, { onSuccess: (t) => navigate(`/tickets/${t.id}`) });
   }
 
   const p = preview.data;
   return (
     <div className="mx-auto max-w-6xl">
-      <Link to="/complaints" className="mb-3 inline-flex items-center gap-1 text-sm text-slate-500 hover:text-slate-800">
-        <ArrowLeft className="h-4 w-4" /> Complaints
+      <Link to="/tickets" className="mb-3 inline-flex items-center gap-1 text-sm text-slate-500 hover:text-slate-800">
+        <ArrowLeft className="h-4 w-4" /> Tickets
       </Link>
       <PageHeader
-        title="New complaint"
+        title="Create ticket"
         description="The NLP pipeline classifies category, intent, sentiment and priority as soon as you save."
         actions={
           <Button variant="subtle" size="sm" type="button" icon={<Wand2 className="h-3.5 w-3.5" />}
@@ -77,8 +77,8 @@ export function NewComplaintPage() {
         <form onSubmit={onSubmit} noValidate>
           <Card>
             <div className="space-y-4 p-4">
-              <Field label="Complaint text" htmlFor="text" error={error ?? undefined} hint="Personal data is masked before any text is sent to the LLM.">
-                <Textarea id="text" rows={7} value={form.text} onChange={set("text")} placeholder="What happened, in the customer's words…" />
+              <Field label="Complaint description" htmlFor="description" error={error ?? undefined} hint="Personal data is masked before any text is sent to the LLM.">
+                <Textarea id="description" rows={7} value={form.description} onChange={set("description")} placeholder="What happened, in the customer's words…" />
               </Field>
               <Field label="Subject (optional)" htmlFor="subject">
                 <Input id="subject" value={form.subject} onChange={set("subject")} maxLength={255} placeholder="Defaults to the first line" />
@@ -114,7 +114,7 @@ export function NewComplaintPage() {
               <Button type="button" variant="secondary" icon={<Sparkles className="h-4 w-4" />} loading={preview.isPending} onClick={analyze}>
                 Analyze
               </Button>
-              <Button type="submit" loading={create.isPending}>Save complaint</Button>
+              <Button type="submit" loading={create.isPending}>Create ticket</Button>
             </div>
           </Card>
         </form>

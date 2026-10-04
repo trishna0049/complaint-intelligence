@@ -1,4 +1,4 @@
-"""Analytics SQL over the complaints table (aggregates only — formatting lives in the service)."""
+"""Analytics SQL over the tickets table (aggregates only — composition and caching live in the service)."""
 
 from __future__ import annotations
 
@@ -8,8 +8,8 @@ from typing import Any
 from sqlalchemy import Date, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Complaint
-from app.repositories.complaints import priority_rank
+from app.models import Ticket
+from app.repositories.tickets import priority_rank
 
 NEGATIVE = ("Very Negative", "Negative")
 SENTIMENTS = ["Very Negative", "Negative", "Neutral", "Positive", "Very Positive"]
@@ -17,19 +17,19 @@ HIGH = ("High", "Critical")
 
 
 async def kpis(db: AsyncSession, start: datetime, end: datetime) -> dict[str, Any]:
-    is_negative = Complaint.sentiment.in_(NEGATIVE)
+    is_negative = Ticket.sentiment.in_(NEGATIVE)
     row = (
         await db.execute(
             select(
                 func.count(),
-                func.count().filter(Complaint.status != "Resolved"),
-                func.count().filter(Complaint.priority.in_(HIGH)),
-                func.count().filter(Complaint.priority == "Critical"),
+                func.count().filter(Ticket.status != "Resolved"),
+                func.count().filter(Ticket.priority.in_(HIGH)),
+                func.count().filter(Ticket.priority == "Critical"),
                 func.count().filter(is_negative),
-                func.count(Complaint.sentiment),
-                func.avg(Complaint.csat_score),
-                func.avg(Complaint.sentiment_score),
-            ).where(Complaint.created_at >= start, Complaint.created_at < end)
+                func.count(Ticket.sentiment),
+                func.avg(Ticket.csat_score),
+                func.avg(Ticket.sentiment_score),
+            ).where(Ticket.created_at >= start, Ticket.created_at < end)
         )
     ).one()
     total, open_, high, critical, neg, with_sent, csat, sent_score = row
@@ -45,36 +45,39 @@ async def kpis(db: AsyncSession, start: datetime, end: datetime) -> dict[str, An
 
 
 async def earliest_created(db: AsyncSession) -> datetime | None:
-    return await db.scalar(select(func.min(Complaint.created_at)))
+    return await db.scalar(select(func.min(Ticket.created_at)))
 
 
 async def open_counts(db: AsyncSession) -> tuple[int, int]:
-    """(open complaints needing review, open high/critical complaints)."""
+    """(open tickets needing review, open high/critical tickets)."""
     row = (
         await db.execute(
             select(
-                func.count().filter(Complaint.needs_review.is_(True)),
-                func.count().filter(Complaint.priority.in_(HIGH)),
-            ).where(Complaint.status != "Resolved")
+                func.count().filter(Ticket.needs_review.is_(True)),
+                func.count().filter(Ticket.priority.in_(HIGH)),
+            ).where(Ticket.status != "Resolved")
         )
     ).one()
     return row[0] or 0, row[1] or 0
 
 
-async def daily_trend(db: AsyncSession, since: datetime) -> list[dict[str, Any]]:
-    day = cast(Complaint.created_at, Date)
+async def trend(db: AsyncSession, since: datetime, granularity: str = "day") -> list[dict[str, Any]]:
+    """Volume, sentiment mix, high-priority count and CSAT per day / ISO week / month."""
+    if granularity not in ("day", "week", "month"):
+        raise ValueError(granularity)
+    bucket = cast(func.date_trunc(granularity, Ticket.created_at), Date)
     rows = (
         await db.execute(
             select(
-                day.label("day"),
+                bucket.label("bucket"),
                 func.count(),
-                *[func.count().filter(Complaint.sentiment == s) for s in SENTIMENTS],
-                func.count().filter(Complaint.priority.in_(HIGH)),
-                func.avg(Complaint.csat_score),
+                *[func.count().filter(Ticket.sentiment == s) for s in SENTIMENTS],
+                func.count().filter(Ticket.priority.in_(HIGH)),
+                func.avg(Ticket.csat_score),
             )
-            .where(Complaint.created_at >= since)
-            .group_by(day)
-            .order_by(day)
+            .where(Ticket.created_at >= since)
+            .group_by(bucket)
+            .order_by(bucket)
         )
     ).all()
     return [
@@ -94,11 +97,11 @@ async def breakdown(db: AsyncSession, column: Any, since: datetime, limit: int |
         select(
             column,
             func.count().label("n"),
-            func.count().filter(Complaint.sentiment.in_(NEGATIVE)),
-            func.count(Complaint.sentiment),
-            func.count().filter(Complaint.priority.in_(HIGH)),
+            func.count().filter(Ticket.sentiment.in_(NEGATIVE)),
+            func.count(Ticket.sentiment),
+            func.count().filter(Ticket.priority.in_(HIGH)),
         )
-        .where(Complaint.created_at >= since, column.is_not(None))
+        .where(Ticket.created_at >= since, column.is_not(None))
         .group_by(column)
         .order_by(func.count().desc(), column)
     )
@@ -108,7 +111,7 @@ async def breakdown(db: AsyncSession, column: Any, since: datetime, limit: int |
         {
             "name": name,
             "count": n,
-            # share of complaints *with a sentiment score* that are negative (templated rows have none)
+            # share of tickets *with a sentiment score* that are negative (templated rows have none)
             "negative_share": round((neg or 0) / scored, 4) if scored else None,
             "high_priority": high or 0,
         }
@@ -118,34 +121,34 @@ async def breakdown(db: AsyncSession, column: Any, since: datetime, limit: int |
 
 async def sentiment_distribution(db: AsyncSession, since: datetime) -> dict[str, int]:
     rows = await db.execute(
-        select(Complaint.sentiment, func.count())
-        .where(Complaint.created_at >= since, Complaint.sentiment.is_not(None))
-        .group_by(Complaint.sentiment)
+        select(Ticket.sentiment, func.count())
+        .where(Ticket.created_at >= since, Ticket.sentiment.is_not(None))
+        .group_by(Ticket.sentiment)
     )
     return {s: n for s, n in rows.all()}
 
 
-async def open_high_priority(db: AsyncSession, limit: int = 8) -> list[Complaint]:
+async def open_high_priority(db: AsyncSession, limit: int = 8) -> list[Ticket]:
     rows = await db.scalars(
-        select(Complaint)
-        .where(Complaint.status != "Resolved", Complaint.priority.in_(HIGH))
-        .order_by(priority_rank().desc(), Complaint.created_at.desc())
+        select(Ticket)
+        .where(Ticket.status != "Resolved", Ticket.priority.in_(HIGH))
+        .order_by(priority_rank().desc(), Ticket.created_at.desc())
         .limit(limit)
     )
     return list(rows.all())
 
 
 async def week_over_week(db: AsyncSession, week: datetime, two_weeks: datetime) -> list[tuple[Any, ...]]:
-    this_week = Complaint.created_at >= week
+    this_week = Ticket.created_at >= week
     rows = await db.execute(
         select(
-            Complaint.category,
+            Ticket.category,
             func.count().filter(this_week),
-            func.count().filter(Complaint.created_at < week),
-            func.count().filter(this_week & Complaint.sentiment.in_(NEGATIVE)),
-            func.count().filter(this_week & Complaint.sentiment.is_not(None)),
+            func.count().filter(Ticket.created_at < week),
+            func.count().filter(this_week & Ticket.sentiment.in_(NEGATIVE)),
+            func.count().filter(this_week & Ticket.sentiment.is_not(None)),
         )
-        .where(Complaint.created_at >= two_weeks, Complaint.category.is_not(None))
-        .group_by(Complaint.category)
+        .where(Ticket.created_at >= two_weeks, Ticket.category.is_not(None))
+        .group_by(Ticket.category)
     )
     return [tuple(r) for r in rows.all()]

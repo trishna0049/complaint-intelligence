@@ -29,7 +29,7 @@ Other differences: routes under `/api/` not `/api/v1/`; `complaints` instead of 
 | Step | Scope | Status |
 |---|---|---|
 | 1 | Infrastructure: Compose (Postgres 16 + pgvector, Redis), async SQLAlchemy, Alembic, re-import | ✅ Done |
-| 2 | API alignment: `/api/v1`, tickets, `INC-`, `/analytics/*` | ⏳ Not started |
+| 2 | API alignment: `/api/v1`, tickets, `INC-`, `/analytics/*` | ✅ Done (`/analytics/sla` and `/workload` arrive with steps 9 and 11, once SLA and assignment data exist) |
 | 3 | Auth and roles | ⏳ Not started |
 | 4 | Full ticket lifecycle | ⏳ Not started |
 | 5 | Routing | ⏳ Not started |

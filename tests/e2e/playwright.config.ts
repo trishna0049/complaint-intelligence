@@ -36,11 +36,12 @@ export default defineConfig({
     {
       command: `"${python}" -m scripts.prepare_db --reset && "${python}" -m uvicorn app.main:app --port ${API_PORT}`,
       cwd: path.join(root, "backend"),
-      url: `http://localhost:${API_PORT}/api/health`,
+      url: `http://localhost:${API_PORT}/api/v1/health`,
       timeout: 180_000, // first start loads the Hugging Face sentiment model
       reuseExistingServer: false,
       env: {
         DATABASE_URL: E2E_DB,
+        REDIS_URL: process.env.E2E_REDIS_URL ?? `redis://localhost:${process.env.REDIS_PORT ?? "16379"}/14`,
         LLM_PROVIDER: "mock",
         OPENAI_API_KEY: "",
         CORS_ORIGINS: `http://localhost:${WEB_PORT}`,

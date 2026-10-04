@@ -1,4 +1,4 @@
-"""Import the historical dataset into the complaints table (idempotent).
+"""Import the historical dataset into the tickets table (idempotent).
 
 * Rows are keyed on the dataset's `Unique id`; re-running skips rows already imported (pre-filtered, and
   `ON CONFLICT DO NOTHING` guards against a concurrent run).
@@ -6,7 +6,9 @@
 * Category / intent come from the dataset's own labels (labels_from='dataset').
 * Sentiment comes from the offline Hugging Face run (ml/artifacts/sentiment_predictions.csv) when present.
 * Priority uses the same rules as live complaints (category, sentiment, amount, text cues).
-* Empty remarks get a templated text, flagged text_is_template (and excluded from model training).
+* Empty remarks get a templated description (description_source='template', excluded from model training).
+* `Issue_reported at` becomes created_at and `issue_responded` the first-response time (also used as the
+  resolution time: every historical contact was closed in that interaction).
 * Timestamps are shifted by whole days so the newest record lands yesterday, which keeps the dashboard's
   "last 7 / 30 days" and "this week vs last week" views meaningful (relative spacing is preserved).
 
@@ -28,7 +30,7 @@ from sqlalchemy.dialects.postgresql import insert
 from app.ai.priority import decide_priority
 from app.core.config import REPO_DIR, get_settings
 from app.core.db import SessionLocal, dispose_engine
-from app.models import Complaint
+from app.models import Ticket
 
 TS = "%d/%m/%Y %H:%M"
 
@@ -75,9 +77,7 @@ async def run(csv_path: Path, limit: int | None = None, shift_to_now: bool = Tru
     shift = day_shift(latest, now) if shift_to_now else timedelta(0)
 
     async with SessionLocal() as db:
-        existing = set(
-            (await db.scalars(select(Complaint.external_id).where(Complaint.external_id.is_not(None)))).all()
-        )
+        existing = set((await db.scalars(select(Ticket.external_id).where(Ticket.external_id.is_not(None)))).all())
         todo = df[~df["Unique id"].isin(existing)]
         rows = []
         for r in todo.rename(columns=COLUMNS).itertuples(index=False):
@@ -93,8 +93,8 @@ async def run(csv_path: Path, limit: int | None = None, shift_to_now: bool = Tru
                     "external_id": r.uid,
                     "source": "dataset",
                     "subject": f"{r.intent} — {r.category}",
-                    "text": r.remark or template_text(r.channel, r.category, r.intent),
-                    "text_is_template": not r.remark,
+                    "description": r.remark or template_text(r.channel, r.category, r.intent),
+                    "description_source": "dataset_remark" if r.remark else "template",
                     "channel": r.channel,
                     "order_id": None if pd.isna(r.order_id) else r.order_id,
                     "product": None if pd.isna(r.product) else r.product,
@@ -103,6 +103,8 @@ async def run(csv_path: Path, limit: int | None = None, shift_to_now: bool = Tru
                     "status": "Resolved",
                     "csat_score": int(r.csat),
                     "created_at": created,
+                    "updated_at": responded or created,
+                    "first_response_at": responded,
                     "resolved_at": responded or created,
                     "category": r.category,
                     "intent": r.intent,
@@ -121,9 +123,7 @@ async def run(csv_path: Path, limit: int | None = None, shift_to_now: bool = Tru
             )
         inserted = 0  # rows actually written (a concurrent run may have inserted some)
         for i in range(0, len(rows), batch):
-            stmt = (
-                insert(Complaint).on_conflict_do_nothing(index_elements=[Complaint.external_id]).returning(Complaint.id)
-            )
+            stmt = insert(Ticket).on_conflict_do_nothing(index_elements=[Ticket.external_id]).returning(Ticket.id)
             result = await db.execute(stmt, rows[i : i + batch])
             inserted += len(result.all())
             await db.commit()

@@ -133,9 +133,9 @@ def use_openai(monkeypatch: pytest.MonkeyPatch, stub_url: str):  # type: ignore[
 
 async def create(client) -> int:  # type: ignore[no-untyped-def]
     res = await client.post(
-        "/api/complaints",
+        "/api/v1/tickets",
         json={
-            "text": "I was charged twice for ₹12,500. Call me on 9876543210 or mail ravi@gmail.com",
+            "description": "I was charged twice for ₹12,500. Call me on 9876543210 or mail ravi@gmail.com",
             "customer_name": "Ravi Kumar",
         },
     )
@@ -145,7 +145,7 @@ async def create(client) -> int:  # type: ignore[no-untyped-def]
 async def test_success_stores_usage_and_cost_and_masks_pii(client, use_openai):
     cid = await create(client)
     use_openai("gpt-4o-mini")
-    res = await client.post(f"/api/complaints/{cid}/insights")
+    res = await client.post("/api/v1/ai/draft-response", json={"ticket_id": cid})
     assert res.status_code == 201, res.text
     body = res.json()
     assert body["provider"] == "openai" and body["model"] == "gpt-4o-mini-2024-07-18"
@@ -172,14 +172,14 @@ async def test_success_stores_usage_and_cost_and_masks_pii(client, use_openai):
 async def test_openai_failures_return_clear_errors(client, use_openai, model, status, code, phrase):
     cid = await create(client)
     use_openai(model)
-    res = await client.post(f"/api/complaints/{cid}/insights")
+    res = await client.post("/api/v1/ai/draft-response", json={"ticket_id": cid})
     assert res.status_code == status
     detail = res.json()["detail"]
     assert detail["code"] == code and phrase in detail["message"]
     if model == "ratelimit":
         assert res.headers["retry-after"] == "20"
     # Nothing was stored and no mock output was substituted.
-    assert (await client.get(f"/api/complaints/{cid}")).json()["insight"] is None
+    assert (await client.get(f"/api/v1/tickets/{cid}")).json()["copilot"] is None
 
 
 async def test_missing_key_is_a_configuration_error(client, monkeypatch):
@@ -188,7 +188,7 @@ async def test_missing_key_is_a_configuration_error(client, monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "")
     get_settings.cache_clear()
     try:
-        res = await client.post(f"/api/complaints/{cid}/insights")
+        res = await client.post("/api/v1/ai/draft-response", json={"ticket_id": cid})
     finally:
         monkeypatch.undo()
         get_settings.cache_clear()

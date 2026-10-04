@@ -5,8 +5,8 @@ import { useHealth } from "@/api/client";
 
 const NAV = [
   { to: "/", label: "Dashboard", icon: BarChart3, end: true },
-  { to: "/complaints", label: "Complaints", icon: Inbox, end: true },
-  { to: "/complaints/new", label: "New complaint", icon: Plus, end: true },
+  { to: "/tickets", label: "Tickets", icon: Inbox, end: true },
+  { to: "/tickets/new", label: "New ticket", icon: Plus, end: true },
 ];
 
 export function Layout() {

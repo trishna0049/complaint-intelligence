@@ -8,6 +8,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from redis.asyncio import Redis
+from sqlalchemy.engine import make_url
 
 from app.core.config import get_settings
 
@@ -32,14 +33,22 @@ async def close_redis() -> None:
 
 # ------------------------------------------------------------------ cache
 # Invalidation bumps a generation counter instead of scanning keys: old entries simply expire.
-_GEN_KEY = "cache:gen:{ns}"
+# Keys are prefixed with the database name, so two databases sharing one Redis (dev and e2e) never mix.
+
+
+def _db_tag() -> str:
+    return make_url(get_settings().database_url).database or "db"
+
+
+def _gen_key(ns: str) -> str:
+    return f"cache:{_db_tag()}:gen:{ns}"
 
 
 async def cached_json(ns: str, key: str, ttl: int, compute: Callable[[], Awaitable[Any]]) -> Any:
     r = get_redis()
     try:
-        gen = await r.get(_GEN_KEY.format(ns=ns)) or "0"
-        full = f"cache:{ns}:{gen}:{key}"
+        gen = await r.get(_gen_key(ns)) or "0"
+        full = f"cache:{_db_tag()}:{ns}:{gen}:{key}"
         hit = await r.get(full)
         if hit is not None:
             return json.loads(hit)
@@ -56,6 +65,6 @@ async def cached_json(ns: str, key: str, ttl: int, compute: Callable[[], Awaitab
 
 async def invalidate(ns: str) -> None:
     try:
-        await get_redis().incr(_GEN_KEY.format(ns=ns))
+        await get_redis().incr(_gen_key(ns))
     except Exception as exc:
         log.warning("cache invalidation failed: %s", exc)

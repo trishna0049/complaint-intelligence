@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 from app.ai.classifier import get_classifier
 from app.ai.llm import LLMError
 from app.ai.sentiment import load_sentiment
-from app.api.routes import router
+from app.api.v1 import api_router
 from app.core.config import get_settings
 from app.core.db import dispose_engine
 from app.core.redis import close_redis
@@ -37,7 +37,7 @@ def create_app() -> FastAPI:
         allow_methods=["GET", "POST", "PATCH"],
         allow_headers=["Content-Type"],
     )
-    app.include_router(router)
+    app.include_router(api_router)
 
     @app.exception_handler(LLMError)
     async def _llm_error(_: Request, exc: LLMError) -> JSONResponse:
