@@ -16,7 +16,7 @@ JWT roles). On request it was **simplified** to the core described in the projec
 | LLM insights — OpenAI structured outputs + offline mock | ✅ |
 | FastAPI backend (SQLite) + idempotent dataset importer | ✅ |
 | React dashboard, complaints list, new complaint (live triage), complaint detail (AI insights) | ✅ |
-| Tests (pytest + Vitest), lint, GitHub Actions CI | ✅ |
+| Tests (pytest + Vitest + Playwright end-to-end), lint, GitHub Actions CI | ✅ |
 | Docs: README, architecture, priority rules, model card | ✅ |
 
 Removed in the simplification: Kafka + outbox + workers + DLQ, Redis, Postgres/pgvector + embeddings/RAG,

@@ -100,6 +100,19 @@ switch ($Command) {
         Run "npm" @("run", "test") (Join-Path $Root "frontend")
     }
 
+    "e2e" {
+        # Playwright starts its own API + web servers (ports 18100/15200, var\e2e.db, mock LLM).
+        Need-Venv
+        if (-not (Test-Path (Join-Path $Root "ml\artifacts\classifier_meta.json"))) { throw "Train the models first: .\scripts\dev.ps1 train" }
+        $e2e = Join-Path $Root "tests\e2e"
+        $env:PLAYWRIGHT_BROWSERS_PATH = Join-Path $Root ".pw-browsers"
+        if (-not (Test-Path (Join-Path $e2e "node_modules"))) {
+            Run "npm" @("install", "--no-audit", "--no-fund", "--cache", (Join-Path $Root ".npm-cache")) $e2e
+        }
+        Run "npx" @("playwright", "install", "chromium") $e2e
+        Run "npx" (@("playwright", "test") + $Rest) $e2e
+    }
+
     "lint" {
         Need-Venv
         Run $Py @("-m", "ruff", "check", "backend", "ml", "tests")
@@ -117,6 +130,7 @@ Usage: .\scripts\dev.ps1 <command>
   start      Start the API and the web app in two new windows
   api | web  Start only the API (uvicorn --reload) or only the Vite dev server
   test       Backend (pytest) + frontend (Vitest) tests
+  e2e        Playwright end-to-end test of the full complaint flow (own servers + database)
   lint       ruff + eslint + TypeScript type-check
   reset-db   Delete the SQLite database
 "@

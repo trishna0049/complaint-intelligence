@@ -25,12 +25,17 @@ Prerequisites: Python 3.12, Node 20+, and the dataset CSV saved as `data\ecommer
 
 ```powershell
 .\scripts\dev.ps1 setup     # .env, Python venv, pip + npm install
-.\scripts\dev.ps1 train     # data profile, train classifiers, validate the sentiment model (~25 min on CPU)
+.\scripts\dev.ps1 train     # data profile, train classifiers, validate the sentiment model (~45 min on CPU)
 .\scripts\dev.ps1 import    # load the 85,907 historical complaints into SQLite (~1 min)
 .\scripts\dev.ps1 start     # API on http://localhost:18000, app on http://localhost:15173
 ```
 
-Other commands: `.\scripts\dev.ps1 test`, `lint`, `api`, `web`, `reset-db`. Ports live in `.env`
+Other commands: `.\scripts\dev.ps1 test`, `lint`, `api`, `web`, `reset-db`.
+
+**End-to-end test:** `.\scripts\dev.ps1 e2e` runs a Playwright test of the whole flow (dashboard → new complaint →
+Analyze → save → AI insights → list search → dashboard → resolve). It starts its own API and web servers on ports
+18100/15200 with a separate `var\e2e.db` and the mock LLM, so it never touches your data. It needs the trained
+models; Chromium is downloaded into `.pw-browsers\` on first run. Ports live in `.env`
 (`API_PORT`, `WEB_PORT`). To use OpenAI, set `LLM_PROVIDER=openai` and `OPENAI_API_KEY=...` in `.env`.
 
 On macOS/Linux the same steps are: `python -m venv backend/.venv`, `pip install -r backend/requirements.txt -r
@@ -100,6 +105,7 @@ backend/scripts/    import_dataset.py
 ml/                 profile_dataset.py, train_classifiers.py, eval_sentiment.py, reports/, MODEL_CARD.md
 frontend/src/       pages/ (Dashboard, Complaints, NewComplaint, ComplaintDetail), components/, api/
 tests/backend/      pytest (AI components, API, dashboard)
+tests/e2e/          Playwright end-to-end test of the full complaint flow
 docs/               DATA_PROFILE.md, ARCHITECTURE.md, PRIORITY_RULES.md
 scripts/dev.ps1     all developer commands
 ```

@@ -35,3 +35,8 @@ Thumbs.db
 .idea/
 .vscode/
 *.log
+
+# --- Playwright e2e ---
+tests/e2e/test-results/
+tests/e2e/playwright-report/
+.pw-browsers/
