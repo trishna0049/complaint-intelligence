@@ -9,8 +9,8 @@ and committed locally before the next one starts.
 |---|---|---|
 | 1 | Infrastructure — Compose (Postgres 16 + pgvector, Redis), async SQLAlchemy 2, Alembic, re-import | ✅ |
 | 2 | API alignment — `/api/v1`, tickets, `INC-` numbers, `/analytics/*` | ✅ |
-| 3 | Auth and roles — JWT + rotating refresh tokens, argon2, ADMIN/AGENT guards, admin screens | ⏳ next |
-| 4 | Full ticket lifecycle — 8 states, assign/escalate/resolve/close/reopen, comments, attachments, timeline, audit | ⏳ |
+| 3 | Auth and roles — JWT + rotating refresh tokens, argon2, ADMIN/AGENT guards, admin screens | ✅ |
+| 4 | Full ticket lifecycle — 8 states, assign/escalate/resolve/close/reopen, comments, attachments, timeline, audit | ⏳ next |
 | 5 | Routing — category → team → least-busy agent; low-confidence review queue | ⏳ |
 | 6 | Copilot completion — root cause, prompt_version, accept / regenerate / discard | ⏳ |
 | 7 | Retrieval — MiniLM embeddings, HNSW, hybrid search, similar tickets, knowledge base, RAG | ⏳ |
@@ -24,7 +24,7 @@ and committed locally before the next one starts.
 
 ## Where things stand (resume here)
 
-- Steps 1–2 done. Infrastructure: `docker compose` project **complaint-intel** (`.\scripts\dev.ps1 up`) —
+- Steps 1–3 done. Infrastructure: `docker compose` project **complaint-intel** (`.\scripts\dev.ps1 up`) —
   Postgres on `localhost:15432` (databases `complaints`, `complaints_test`, `complaints_e2e`), Redis on
   `localhost:16379` (tests use Redis DB 15).
 - Schema is managed by Alembic only (`backend/migrations`, `.\scripts\dev.ps1 migrate`); the API never creates tables.
@@ -34,7 +34,12 @@ and committed locally before the next one starts.
   `categories`). Tables `tickets` (numbers `INC-00001`, from `next_ticket_number()`) and `ai_analyses`
   (`kind` = triage | copilot). Frontend routes `/tickets`, `/tickets/new`, `/tickets/:id` (old `/complaints/*`
   links redirect).
-- Next: step 3 (auth and roles).
+- Auth: `POST /auth/login` → access token (15 min JWT, kept in memory by the SPA) + refresh token in an HttpOnly
+  cookie (`ci_refresh`, path `/api/v1/auth`, rotated on every refresh, reuse revokes the family). Seeded by
+  `.\scripts\dev.ps1 seed`: admin `admin@shopzilla.example` / `Admin@12345`, every dataset agent with
+  `Agent@12345` (Payments Support demo agent: `alexander.saunders@shopzilla.example`).
+- Agents still see all tickets — scoping to own + team tickets is step 4 (by design of the plan).
+- Next: step 4 (full ticket lifecycle).
 
 ## Step log
 
@@ -64,3 +69,27 @@ and committed locally before the next one starts.
   numbers. Cache keys are now namespaced by database name (regression test added) and e2e uses Redis DB 14.
 - Tests: 43 backend, 11 frontend, Playwright e2e — all pass. Checked by hand on the full dataset (dashboard, list,
   detail screenshots).
+
+### Step 3 — Auth and roles ✅
+- Migration `0003`: `departments`, `teams`, `users` (role ADMIN/AGENT, team, active, dataset supervisor),
+  `categories` (with the owning team, used by routing in step 5), `refresh_tokens` (hash only, family, rotation
+  chain, revoke reason) and `audit_logs`.
+- argon2id passwords (constant-time path for unknown e-mails); JWT access tokens (role re-read from the DB on every
+  request, so demotions and deactivations apply immediately); refresh rotation with reuse detection (reuse →
+  whole family revoked + audit) and a 10 s leeway that returns a retryable 409 for two tabs refreshing at once.
+- Endpoints: `/auth/login|refresh|logout|me`; Admin CRUD `/users` (deactivate, never delete), `/teams`,
+  `/departments`, `/categories` (read for everyone); `/admin/audit-logs`. Analytics is Admin only (agents get
+  "My stats" in step 11). Built-in dataset categories can't be renamed or deleted (classifier + priority rules
+  depend on the names); their owning team can change.
+- `PUBLIC_ROUTES` in `app/api/v1/__init__.py`; `test_every_non_public_route_depends_on_current_user` (structural)
+  and `..._returns_401_without_a_token` (behavioural) fail if a route lacks auth; every `require_admin` route is
+  checked to return 403 for agents.
+- Seed (`scripts/seed.py`, idempotent): 3 departments, 12 category teams (e.g. Payments Support), 12 categories,
+  1 admin, 1,371 dataset agents (supervisor groups allocated to teams in proportion to category volume; ~60 s
+  for argon2). `--agents-per-team N` keeps e2e setup fast.
+- Frontend: login page, `AuthProvider` (session restore from the cookie, proactive refresh 60 s before expiry,
+  single-flight refresh + retry on 401, 409 retry), `RequireAuth` / `RequireRole`, sidebar layout with
+  role-aware sections and user menu, admin Users / Teams / Categories screens with loading, empty and error states.
+- Checked by hand: screenshots of login, admin users/teams/categories, agent view and the agent's no-access page;
+  curl run of login → refresh → old cookie within 10 s (409) → after 10 s (401, family revoked).
+- Tests: 72 backend (24 new auth/permission tests), 20 frontend (9 new), Playwright e2e signs in first.

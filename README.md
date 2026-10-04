@@ -27,6 +27,7 @@ Prerequisites: Python 3.12, Node 20+, Docker Desktop, and the dataset CSV saved 
 .\scripts\dev.ps1 setup     # .env, Python venv, pip + npm install
 .\scripts\dev.ps1 up        # PostgreSQL 16 + pgvector (localhost:15432) and Redis (localhost:16379) in Docker
 .\scripts\dev.ps1 migrate   # create the database and apply the Alembic migrations
+.\scripts\dev.ps1 seed      # departments, teams, categories, the admin and the 1,371 dataset agents (~1 min)
 .\scripts\dev.ps1 train     # data profile, train classifiers, validate the sentiment model (~45 min on CPU)
 .\scripts\dev.ps1 import    # load the 85,907 historical complaints into Postgres (~75 s, idempotent)
 .\scripts\dev.ps1 start     # API on http://localhost:18000, app on http://localhost:15173
@@ -45,6 +46,18 @@ the API; each insight then shows its token count and estimated cost.
 On macOS/Linux the same steps are: `python -m venv backend/.venv`, `pip install -r backend/requirements.txt -r
 backend/requirements-dev.txt`, `python ml/train_classifiers.py`, `python ml/eval_sentiment.py`,
 `docker compose up -d postgres redis`, `cd backend && python -m scripts.prepare_db && python -m scripts.import_dataset`, `uvicorn app.main:app --port 18000`, `cd frontend && npm i && npm run dev`.
+
+## Signing in
+
+`.\scripts\dev.ps1 seed` creates the organisation and prints the demo logins:
+
+| Role | Email | Password |
+|---|---|---|
+| Admin | `admin@shopzilla.example` | `Admin@12345` |
+| Agent (Payments Support) | `alexander.saunders@shopzilla.example` | `Agent@12345` (every seeded agent uses it) |
+
+Change them with `SEED_ADMIN_PASSWORD` / `SEED_AGENT_PASSWORD` in `.env` before seeding. Access tokens last 15 minutes
+and are renewed automatically from an HttpOnly refresh cookie; reusing an old refresh token ends the session.
 
 ## Using it
 
@@ -88,7 +101,8 @@ Mean CSAT rises monotonically from 2.75 (Very Negative) to 4.70 (Very Positive).
 
 ## API
 
-All routes live under `/api/v1/` (spec's API table).
+All routes live under `/api/v1/` (spec's API table). Everything except `/health` and `/auth/login|refresh|logout`
+needs `Authorization: Bearer <access token>`; Admin-only routes return 403 for agents.
 
 | Method | Path | Purpose |
 |---|---|---|
@@ -98,7 +112,10 @@ All routes live under `/api/v1/` (spec's API table).
 | GET / PATCH | `/tickets/{id}` | Detail · update `status` or correct `category` |
 | POST | `/ai/draft-response` | Copilot for `{ticket_id}`: LLM summary, key issues, recommended actions, draft reply |
 | GET | `/analytics/overview`, `/trends?granularity=day\|week\|month`, `/categories`, `/emerging` | Dashboard analytics (Redis-cached) |
-| GET | `/health`, `/categories` | Model versions in use · category list |
+| GET | `/health` | Model versions in use (public) |
+| POST / GET | `/auth/login`, `/auth/refresh`, `/auth/logout` · `/auth/me` | Sign in (refresh token in an HttpOnly cookie), rotate, sign out · current user |
+| CRUD | `/users`, `/teams`, `/departments`, `/categories` | Admin management (categories and teams are readable by agents) |
+| GET | `/admin/audit-logs` | Sensitive actions (Admin) |
 
 Interactive docs: http://localhost:18000/docs
 

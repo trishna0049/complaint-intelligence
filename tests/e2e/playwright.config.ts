@@ -34,7 +34,7 @@ export default defineConfig({
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"], viewport: { width: 1440, height: 1000 } } }],
   webServer: [
     {
-      command: `"${python}" -m scripts.prepare_db --reset && "${python}" -m uvicorn app.main:app --port ${API_PORT}`,
+      command: `"${python}" -m scripts.prepare_db --reset && "${python}" -m scripts.seed --agents-per-team 2 && "${python}" -m uvicorn app.main:app --port ${API_PORT}`,
       cwd: path.join(root, "backend"),
       url: `http://localhost:${API_PORT}/api/v1/health`,
       timeout: 180_000, // first start loads the Hugging Face sentiment model

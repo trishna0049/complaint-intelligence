@@ -22,6 +22,22 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:16379/0"
     cors_origins: Annotated[list[str], NoDecode] = Field(default_factory=lambda: ["http://localhost:15173"])
 
+    # --- auth ---
+    # Signing key for access tokens. The default only works outside production (see `check_production`).
+    jwt_secret: str = "dev-only-insecure-jwt-secret-change-me"
+    jwt_algorithm: str = "HS256"
+    access_token_minutes: int = 15
+    refresh_token_days: int = 7
+    # A refresh token presented again within this window after it was rotated is treated as a benign race between
+    # two browser tabs (the client retries with the newer cookie) rather than as token theft.
+    refresh_reuse_leeway_seconds: int = 10
+    refresh_cookie_name: str = "ci_refresh"
+    cookie_secure: bool = False  # True behind HTTPS
+    # Demo accounts created by scripts/seed.py
+    seed_admin_email: str = "admin@shopzilla.example"
+    seed_admin_password: str = "Admin@12345"
+    seed_agent_password: str = "Agent@12345"
+
     # --- AI ---
     llm_provider: Literal["mock", "openai"] = "mock"
     openai_api_key: str = ""
@@ -39,6 +55,11 @@ class Settings(BaseSettings):
     artifacts_dir: Path = REPO_DIR / "ml" / "artifacts"
     # Category predictions below this confidence are flagged for human review.
     review_threshold: float = 0.45
+
+    def check_production(self) -> None:
+        """Refuse to start in production with development secrets."""
+        if self.environment == "production" and (self.jwt_secret.startswith("dev-only") or len(self.jwt_secret) < 32):
+            raise RuntimeError("Set JWT_SECRET to a random value of at least 32 characters in production")
 
     @field_validator("cors_origins", mode="before")
     @classmethod

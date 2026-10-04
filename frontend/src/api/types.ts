@@ -188,3 +188,72 @@ export interface Emerging {
   generated_at: string;
   emerging: EmergingIssue[];
 }
+
+// ------------------------------------------------------------------ auth & organisation
+export type Role = "ADMIN" | "AGENT";
+
+export interface TeamRef {
+  id: number;
+  name: string;
+}
+
+export interface User {
+  id: number;
+  name: string;
+  email: string;
+  role: Role;
+  team: TeamRef | null;
+  is_active: boolean;
+  source: "app" | "dataset";
+  supervisor: string | null;
+  last_login_at: string | null;
+  created_at: string;
+}
+
+export interface AuthSession {
+  access_token: string;
+  token_type: "bearer";
+  expires_in: number;
+  user: User;
+}
+
+export interface Department {
+  id: number;
+  name: string;
+}
+
+export interface TeamInfo {
+  id: number;
+  name: string;
+  description: string | null;
+  department: Department;
+  member_count: number;
+  categories: string[];
+}
+
+export interface CategoryInfo {
+  id: number;
+  name: string;
+  description: string | null;
+  team: TeamRef | null;
+  base_priority: Priority;
+  /** Dataset category: the classifier and the priority rules use its name, so it can't be renamed or deleted. */
+  builtin: boolean;
+}
+
+export interface UserInput {
+  name: string;
+  email: string;
+  password: string;
+  role: Role;
+  team_id: number | null;
+}
+
+export interface UserPatch {
+  name?: string;
+  role?: Role;
+  team_id?: number | null;
+  clear_team?: boolean;
+  is_active?: boolean;
+  password?: string;
+}

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import AsyncIterator, Iterator
+from dataclasses import dataclass
 from pathlib import Path
 
 from dotenv import dotenv_values
@@ -38,9 +39,12 @@ from sqlalchemy.ext.asyncio import create_async_engine  # noqa: E402
 
 import app.models  # noqa: E402,F401  (registers every table for TRUNCATE)
 from app.ai.classifier import ComplaintClassifier, set_classifier  # noqa: E402
+from app.auth.security import create_access_token, hash_password  # noqa: E402
 from app.core.config import BACKEND_DIR, get_settings  # noqa: E402
 from app.core.db import Base, SessionLocal, dispose_engine  # noqa: E402
 from app.core.redis import close_redis, get_redis  # noqa: E402
+from app.models import Category, Department, Team, User  # noqa: E402
+from scripts import seed as seed_script  # noqa: E402
 
 get_settings.cache_clear()
 
@@ -117,23 +121,95 @@ async def _teardown_connections() -> AsyncIterator[None]:
 
 
 TABLES = ", ".join(t.name for t in Base.metadata.sorted_tables)
+PASSWORD = "Correct-Horse-42"
+_PASSWORD_HASH = hash_password(PASSWORD)  # argon2 is slow on purpose; hash once per run
+
+
+@dataclass
+class Org:
+    admin: User
+    agent: User  # Payments Support
+    other_agent: User  # Returns & Pickups
+    teams: dict[str, Team]
+
+
+async def seed_org() -> Org:
+    """The 12 category teams (as scripts/seed.py), one admin and two agents in different teams."""
+    async with SessionLocal() as db:
+        depts = {name: Department(name=name) for name in seed_script.DEPARTMENTS}
+        db.add_all(depts.values())
+        await db.flush()
+        teams: dict[str, Team] = {}
+        for cat, (team, dept, desc) in seed_script.CATEGORY_TEAMS.items():
+            teams[team] = Team(name=team, department_id=depts[dept].id)
+            db.add(teams[team])
+            await db.flush()
+            db.add(Category(name=cat, description=desc, team_id=teams[team].id))
+        admin = User(name="Ada Admin", email="admin@test.example", password_hash=_PASSWORD_HASH, role="ADMIN")
+        agent = User(
+            name="Arjun Agent",
+            email="agent@test.example",
+            password_hash=_PASSWORD_HASH,
+            role="AGENT",
+            team_id=teams["Payments Support"].id,
+        )
+        other = User(
+            name="Olga Other",
+            email="other@test.example",
+            password_hash=_PASSWORD_HASH,
+            role="AGENT",
+            team_id=teams["Returns & Pickups"].id,
+        )
+        db.add_all([admin, agent, other])
+        await db.commit()
+        return Org(admin, agent, other, teams)
 
 
 @pytest.fixture(autouse=True)
-async def _clean_db() -> AsyncIterator[None]:
+async def org() -> AsyncIterator[Org]:
     async with SessionLocal() as db:
         await db.execute(text(f"TRUNCATE {TABLES} RESTART IDENTITY CASCADE"))
         for seq in Base.metadata._sequences.values():
             await db.execute(text(f"ALTER SEQUENCE {seq.name} RESTART WITH 1"))
         await db.commit()
     await get_redis().flushdb()
-    yield
+    yield await seed_org()
+
+
+def auth_headers(user: User) -> dict[str, str]:
+    token, _ = create_access_token(user.id, user.role)
+    return {"Authorization": f"Bearer {token}"}
+
+
+def _client(headers: dict[str, str] | None = None) -> httpx.AsyncClient:
+    from app.main import app
+
+    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test", headers=headers)
 
 
 @pytest.fixture
-async def client() -> AsyncIterator[httpx.AsyncClient]:
-    from app.main import app
+async def anon() -> AsyncIterator[httpx.AsyncClient]:
+    """No credentials."""
+    async with _client() as c:
+        yield c
 
-    transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+
+@pytest.fixture
+async def client(org: Org) -> AsyncIterator[httpx.AsyncClient]:
+    """Signed in as the admin (can do everything)."""
+    async with _client(auth_headers(org.admin)) as c:
+        yield c
+
+
+@pytest.fixture
+async def agent_client(org: Org) -> AsyncIterator[httpx.AsyncClient]:
+    """Signed in as an agent in Payments Support."""
+    async with _client(auth_headers(org.agent)) as c:
+        yield c
+
+
+@pytest.fixture
+async def other_agent_client(org: Org) -> AsyncIterator[httpx.AsyncClient]:
+    """Signed in as an agent in Returns & Pickups."""
+    async with _client(auth_headers(org.other_agent)) as c:
         yield c

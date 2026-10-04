@@ -6,6 +6,7 @@
   .\scripts\dev.ps1 setup     # venv + Python deps + npm deps + .env
   .\scripts\dev.ps1 up        # Postgres (pgvector) + Redis in Docker
   .\scripts\dev.ps1 migrate   # Alembic migrations
+  .\scripts\dev.ps1 seed      # teams, categories, admin + dataset agents
   .\scripts\dev.ps1 train     # profile data, train classifiers, validate sentiment model
   .\scripts\dev.ps1 import    # load the dataset into Postgres
   .\scripts\dev.ps1 start     # API + web app (opens two windows)
@@ -87,6 +88,12 @@ switch ($Command) {
         Run $Py @("-m", "scripts.prepare_db") (Join-Path $Root "backend")
     }
 
+    "seed" {
+        # Departments, teams, categories, the admin and every dataset agent (idempotent). Prints the demo logins.
+        Need-Venv
+        Run $Py (@("-m", "scripts.seed") + $Rest) (Join-Path $Root "backend")
+    }
+
     "train" {
         Need-Venv; Need-Data
         Run $Py @("ml\profile_dataset.py")
@@ -156,6 +163,7 @@ Usage: .\scripts\dev.ps1 <command>
   up | down  Start / stop Postgres (pgvector) + Redis in Docker (down -v also deletes the data)
   migrate    Create the database if needed and apply the Alembic migrations
   train      Profile the dataset, train category/intent classifiers, validate the sentiment model
+  seed       Teams, categories, the admin and the 1,371 dataset agents (idempotent; prints demo logins)
   import     Load data\ecommerce_support.csv into Postgres (idempotent, batched)
   start      Start the API and the web app in two new windows
   api | web  Start only the API (uvicorn --reload) or only the Vite dev server

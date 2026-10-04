@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "@/App";
 import type { Analysis, CategoryBreakdowns, Emerging, Overview, TicketDetail, Trends } from "@/api/types";
 import { ConfidenceMeter, PriorityBadge } from "@/components/Badges";
-import { health, mockFetch, renderRoute } from "@/test/utils";
+import { adminUser, mockFetch, renderRoute, signedInAs } from "@/test/utils";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -71,7 +71,7 @@ describe("pages", () => {
       (u) => (u.includes("/api/v1/analytics/trends") ? { body: trends } : undefined),
       (u) => (u.includes("/api/v1/analytics/categories") ? { body: breakdowns } : undefined),
       (u) => (u.includes("/api/v1/analytics/emerging") ? { body: emerging } : undefined),
-      (u) => (u.includes("/api/v1/health") ? { body: health } : undefined),
+      signedInAs(adminUser),
     );
     renderRoute(<App />, "/");
     expect(await screen.findByText("1,200")).toBeInTheDocument();
@@ -87,7 +87,7 @@ describe("pages", () => {
     mockFetch(
       (u) => (u.includes("/api/v1/tickets?") ? { body: { items: [ticket], total: 1, page: 1, page_size: 25 } } : undefined),
       (u) => (u.includes("/api/v1/categories") ? { body: [{ name: "Payments related", base_priority: "High" }] } : undefined),
-      (u) => (u.includes("/api/v1/health") ? { body: health } : undefined),
+      signedInAs(adminUser),
     );
     renderRoute(<App />, "/tickets");
     expect(await screen.findByText("INC-00001")).toBeInTheDocument();
@@ -100,7 +100,7 @@ describe("pages", () => {
   it("old /complaints links redirect to tickets", async () => {
     mockFetch(
       (u) => (u.includes("/api/v1/tickets/1") ? { body: ticket } : undefined),
-      (u) => (u.includes("/api/v1/health") ? { body: health } : undefined),
+      signedInAs(adminUser),
       () => ({ body: [] }),
     );
     renderRoute(<App />, "/complaints/1");
@@ -115,7 +115,7 @@ describe("pages", () => {
         priority_reasons: ticket.priority_reasons, entities: ticket.entities, needs_review: false, model_version: "triage-v1" } } : undefined),
       (u, i) => (u.endsWith("/api/v1/tickets") && i?.method === "POST" ? { status: 201, body: ticket } : undefined),
       (u) => (u.includes("/api/v1/tickets/1") ? { body: ticket } : undefined),
-      (u) => (u.includes("/api/v1/health") ? { body: health } : undefined),
+      signedInAs(adminUser),
       () => ({ body: [] }),
     );
     renderRoute(<App />, "/tickets/new");
@@ -138,7 +138,7 @@ describe("pages", () => {
     const fetchMock = mockFetch(
       (u, i) => (u.endsWith("/api/v1/ai/draft-response") && i?.method === "POST" ? ((withCopilot = true), { status: 201, body: copilot }) : undefined),
       (u) => (u.includes("/api/v1/tickets/1") ? { body: { ...ticket, copilot: withCopilot ? copilot : null } } : undefined),
-      (u) => (u.includes("/api/v1/health") ? { body: health } : undefined),
+      signedInAs(adminUser),
       () => ({ body: [] }),
     );
     renderRoute(<App />, "/tickets/1");
@@ -168,7 +168,7 @@ describe("copilot errors are shown clearly, not crashes", () => {
         return { status, body: { detail: { code, message } }, headers: retry ? { "Retry-After": retry } : undefined };
       },
       (u) => (u.includes("/api/v1/tickets/1") ? { body: ticket } : undefined),
-      (u) => (u.includes("/api/v1/health") ? { body: health } : undefined),
+      signedInAs(adminUser),
       () => ({ body: [] }),
     );
     renderRoute(<App />, "/tickets/1");
@@ -186,7 +186,7 @@ describe("copilot errors are shown clearly, not crashes", () => {
     mockFetch(
       (u, i) => (u.endsWith("/ai/draft-response") && i?.method === "POST" ? { throws: true } : undefined),
       (u) => (u.includes("/api/v1/tickets/1") ? { body: ticket } : undefined),
-      (u) => (u.includes("/api/v1/health") ? { body: health } : undefined),
+      signedInAs(adminUser),
       () => ({ body: [] }),
     );
     renderRoute(<App />, "/tickets/1");

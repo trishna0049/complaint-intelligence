@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth.dependencies import CurrentUser
 from app.core.db import get_session
 from app.models import Ticket
 from app.schemas.common import Page
@@ -22,12 +23,13 @@ def to_detail(t: Ticket) -> TicketDetail:
 
 
 @router.post("", response_model=TicketDetail, status_code=201)
-async def create_ticket(body: TicketCreate, db: AsyncSession = Depends(get_session)) -> TicketDetail:
+async def create_ticket(body: TicketCreate, user: CurrentUser, db: AsyncSession = Depends(get_session)) -> TicketDetail:
     return to_detail(await svc.create_ticket(db, body))
 
 
 @router.get("", response_model=Page[TicketListItem])
 async def list_tickets(
+    user: CurrentUser,
     db: AsyncSession = Depends(get_session),
     q: str | None = Query(default=None, max_length=200),
     status: str | None = None,
@@ -59,10 +61,12 @@ async def list_tickets(
 
 
 @router.get("/{ticket_id}", response_model=TicketDetail)
-async def get_ticket(ticket_id: int, db: AsyncSession = Depends(get_session)) -> TicketDetail:
+async def get_ticket(ticket_id: int, user: CurrentUser, db: AsyncSession = Depends(get_session)) -> TicketDetail:
     return to_detail(await svc.get_ticket(db, ticket_id))
 
 
 @router.patch("/{ticket_id}", response_model=TicketDetail)
-async def update_ticket(ticket_id: int, body: TicketUpdate, db: AsyncSession = Depends(get_session)) -> TicketDetail:
+async def update_ticket(
+    ticket_id: int, body: TicketUpdate, user: CurrentUser, db: AsyncSession = Depends(get_session)
+) -> TicketDetail:
     return to_detail(await svc.update_ticket(db, ticket_id, body))

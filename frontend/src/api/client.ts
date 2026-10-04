@@ -2,6 +2,8 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tansta
 import type {
   Analysis,
   CategoryBreakdowns,
+  CategoryInfo,
+  Department,
   Emerging,
   Granularity,
   Overview,
@@ -10,63 +12,16 @@ import type {
   TicketDetail,
   TicketInput,
   Trends,
+  TeamInfo,
   TriagePreview,
+  User,
+  UserInput,
+  UserPatch,
 } from "./types";
 
-export class ApiError extends Error {
-  constructor(
-    public status: number,
-    message: string,
-    public details?: unknown,
-    /** Machine-readable error code from the API, e.g. "llm_rate_limited". */
-    public code?: string,
-    /** Seconds to wait before retrying (from the Retry-After header), when the API sends one. */
-    public retryAfter?: number,
-  ) {
-    super(message);
-  }
-}
+import { api, type Query } from "./http";
 
-/** Every request goes to the versioned API. */
-export const API_BASE = "/api/v1";
-
-type Query = Record<string, string | number | boolean | undefined | null>;
-
-export async function api<T>(path: string, init: { method?: string; body?: unknown; query?: Query } = {}): Promise<T> {
-  const qs = new URLSearchParams();
-  for (const [k, v] of Object.entries(init.query ?? {})) if (v !== undefined && v !== null && v !== "") qs.set(k, String(v));
-  let res: Response;
-  try {
-    res = await fetch(`${API_BASE}${path}${qs.toString() ? `?${qs}` : ""}`, {
-      method: init.method ?? "GET",
-      headers: init.body !== undefined ? { "Content-Type": "application/json" } : undefined,
-      body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
-    });
-  } catch {
-    throw new ApiError(0, "Can't reach the API. Is the backend running?", undefined, "network_error");
-  }
-  if (!res.ok) {
-    let message = res.statusText || "Request failed";
-    let details: unknown;
-    let code: string | undefined;
-    try {
-      const body = await res.json();
-      details = body.detail;
-      if (typeof body.detail === "string") message = body.detail;
-      else if (Array.isArray(body.detail)) message = body.detail.map((d: { msg: string }) => d.msg).join("; ");
-      else if (body.detail && typeof body.detail.message === "string") {
-        // Typed errors, e.g. LLM failures: {detail: {code, message}}
-        message = body.detail.message;
-        code = body.detail.code;
-      }
-    } catch {
-      /* not JSON */
-    }
-    const retry = Number(res.headers.get("Retry-After"));
-    throw new ApiError(res.status, message, details, code, Number.isFinite(retry) && retry > 0 ? retry : undefined);
-  }
-  return (await res.json()) as T;
-}
+export { ApiError, api } from "./http";
 
 const keep = { placeholderData: keepPreviousData };
 
@@ -94,7 +49,7 @@ export const useHealth = () =>
   useQuery({ queryKey: ["health"], queryFn: () => api<{ classifier: string | null; sentiment_model: string; llm_provider: string }>("/health"), staleTime: 60_000 });
 
 export const useCategories = () =>
-  useQuery({ queryKey: ["categories"], queryFn: () => api<{ name: string; base_priority: string }[]>("/categories"), staleTime: Infinity });
+  useQuery({ queryKey: ["categories"], queryFn: () => api<CategoryInfo[]>("/categories"), staleTime: 5 * 60_000 });
 
 export function useCreateTicket() {
   const qc = useQueryClient();
@@ -129,3 +84,49 @@ export function useDraftResponse(id: number) {
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["ticket", id] }),
   });
 }
+
+// ------------------------------------------------------------------ admin: users, teams, departments, categories
+export const useUsers = (query: Query) =>
+  useQuery({ queryKey: ["users", query], queryFn: () => api<Page<User>>("/users", { query }), ...keep });
+
+export const useTeams = () => useQuery({ queryKey: ["teams"], queryFn: () => api<TeamInfo[]>("/teams"), staleTime: 60_000 });
+
+export const useDepartments = () =>
+  useQuery({ queryKey: ["departments"], queryFn: () => api<Department[]>("/departments"), staleTime: 5 * 60_000 });
+
+function useAdminMutation<TVars, TResult>(fn: (v: TVars) => Promise<TResult>, invalidate: string[][]) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: fn,
+    onSuccess: () => invalidate.forEach((queryKey) => void qc.invalidateQueries({ queryKey })),
+  });
+}
+
+export const useCreateUser = () =>
+  useAdminMutation((body: UserInput) => api<User>("/users", { method: "POST", body }), [["users"], ["teams"]]);
+
+export const useUpdateUser = () =>
+  useAdminMutation(({ id, ...body }: UserPatch & { id: number }) => api<User>(`/users/${id}`, { method: "PATCH", body }),
+    [["users"], ["teams"]]);
+
+export const useCreateTeam = () =>
+  useAdminMutation((body: { name: string; department_id: number; description?: string | null }) =>
+    api<TeamInfo>("/teams", { method: "POST", body }), [["teams"]]);
+
+export const useUpdateTeam = () =>
+  useAdminMutation(({ id, ...body }: { id: number; name?: string; department_id?: number; description?: string | null }) =>
+    api<TeamInfo>(`/teams/${id}`, { method: "PATCH", body }), [["teams"], ["users"], ["categories"]]);
+
+export const useDeleteTeam = () =>
+  useAdminMutation((id: number) => api<void>(`/teams/${id}`, { method: "DELETE" }), [["teams"]]);
+
+export const useCreateCategory = () =>
+  useAdminMutation((body: { name: string; description?: string | null; team_id?: number | null }) =>
+    api<CategoryInfo>("/categories", { method: "POST", body }), [["categories"], ["teams"]]);
+
+export const useUpdateCategory = () =>
+  useAdminMutation(({ id, ...body }: { id: number; name?: string; description?: string | null; team_id?: number | null; clear_team?: boolean }) =>
+    api<CategoryInfo>(`/categories/${id}`, { method: "PATCH", body }), [["categories"], ["teams"]]);
+
+export const useDeleteCategory = () =>
+  useAdminMutation((id: number) => api<void>(`/categories/${id}`, { method: "DELETE" }), [["categories"], ["teams"]]);
