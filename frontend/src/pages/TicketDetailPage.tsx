@@ -1,93 +1,130 @@
-import { AlertTriangle, ArrowLeft, Bot, Check, ClipboardCopy, FileText, ListChecks, RefreshCw, Sparkles } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Bot, Check, ClipboardCopy, FileText, ListChecks, RefreshCw, Sparkles, UserRound, Users } from "lucide-react";
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { ApiError, useCategories, useDraftResponse, useTicket, useUpdateTicket } from "@/api/client";
+import { ApiError } from "@/api/http";
+import { useCategories, useDraftResponse, useTicket, useUpdateTicket } from "@/api/client";
 import type { Analysis, TicketDetail } from "@/api/types";
 import { PriorityBadge, StatusBadge } from "@/components/Badges";
+import { ActionBar } from "@/components/ticket/ActionBar";
+import { Conversation } from "@/components/ticket/Conversation";
+import { Timeline } from "@/components/ticket/Timeline";
 import { TriageView } from "@/components/TriageView";
-import { Badge, Button, Card, CardHeader, EmptyState, ErrorState, LoadingState, Select, Skeleton } from "@/components/ui";
-import { fmtDateTime, fmtInr, fmtRelative } from "@/lib/format";
+import { Avatar, Badge, Button, Card, CardHeader, EmptyState, ErrorState, LoadingState, Select, Skeleton } from "@/components/ui";
+import { fmtDate, fmtDateTime, fmtInr, fmtRelative } from "@/lib/format";
 
 export function TicketDetailPage() {
   const id = Number(useParams().id);
-  const { data: c, isLoading, error, refetch } = useTicket(id);
+  const { data: t, isLoading, error, refetch } = useTicket(id);
 
   if (isLoading) return <LoadingState label="Loading ticket…" />;
   if (error) {
     return (
       <Card>
         {error instanceof ApiError && error.status === 404 ? (
-          <EmptyState title="Ticket not found" action={<Link to="/tickets" className="text-sm text-brand-600 hover:underline">Back to tickets</Link>} />
+          <EmptyState title="Ticket not found" description="It doesn't exist, or it belongs to a team you're not part of."
+            action={<Link to="/tickets" className="text-sm text-brand-600 hover:underline">Back to the queue</Link>} />
         ) : (
           <ErrorState error={error} onRetry={() => void refetch()} />
         )}
       </Card>
     );
   }
-  if (!c) return null;
+  if (!t) return null;
+  const done = t.status === "RESOLVED" || t.status === "CLOSED";
 
   return (
     <div>
       <Link to="/tickets" className="mb-3 inline-flex items-center gap-1 text-sm text-slate-500 hover:text-slate-800">
-        <ArrowLeft className="h-4 w-4" /> Tickets
+        <ArrowLeft className="h-4 w-4" /> Ticket queue
       </Link>
       <div className="mb-5 flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="font-mono text-sm text-slate-500">{c.ticket_number}</span>
-            <StatusBadge status={c.status} />
-            <PriorityBadge priority={c.priority} />
-            {c.needs_review && <Badge tone="violet"><Sparkles className="h-3 w-3" /> Needs review</Badge>}
+            <span className="font-mono text-sm text-slate-500">{t.ticket_number}</span>
+            <StatusBadge status={t.status} />
+            <PriorityBadge priority={t.priority} />
+            {t.needs_review && <Badge tone="violet"><Sparkles className="h-3 w-3" /> Needs review</Badge>}
+            {t.reopen_count > 0 && <Badge tone="amber">Reopened ×{t.reopen_count}</Badge>}
           </div>
-          <h1 className="mt-1.5 text-xl font-semibold tracking-tight text-slate-900">{c.subject}</h1>
+          <h1 className="mt-1.5 text-xl font-semibold tracking-tight text-slate-900">{t.subject}</h1>
           <p className="mt-0.5 text-xs text-slate-500">
-            {fmtRelative(c.created_at)} via {c.channel}{c.customer_name && ` · ${c.customer_name}`}{c.city && ` · ${c.city}`}
+            {fmtRelative(t.created_at)} via {t.channel}{t.customer_name && ` · ${t.customer_name}`}{t.city && ` · ${t.city}`}
           </p>
         </div>
-        <StatusControl ticket={c} />
+        <ActionBar ticket={t} />
       </div>
 
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_340px]">
+      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
         <div className="min-w-0 space-y-5">
           <Card>
-            <CardHeader title="Complaint" icon={<FileText className="h-4 w-4" />} subtitle={fmtDateTime(c.created_at)}
-              actions={c.description_source === "template" ? <Badge tone="slate" title="The source dataset row had no remark text">Templated text</Badge> : undefined} />
-            <p className="whitespace-pre-wrap px-4 py-3 text-sm leading-relaxed text-slate-800">{c.description}</p>
+            <CardHeader title="Complaint" icon={<FileText className="h-4 w-4" />} subtitle={fmtDateTime(t.created_at)}
+              actions={t.description_source === "template" ? <Badge tone="slate" title="The source dataset row had no remark text">Templated text</Badge> : undefined} />
+            <p className="whitespace-pre-wrap px-4 py-3 text-sm leading-relaxed text-slate-800">{t.description}</p>
+            {t.resolution && (
+              <div className="mx-4 mb-3 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
+                <span className="font-medium">Resolution: </span>{t.resolution}
+              </div>
+            )}
           </Card>
 
           <Card>
             <CardHeader
               title="AI triage"
               icon={<Sparkles className="h-4 w-4 text-violet-500" />}
-              subtitle={c.labels_from === "dataset" ? "Historical record — category and intent are the dataset's own labels" :
-                c.labels_from === "human" ? "Category corrected by a person" : c.model_version ?? undefined}
+              subtitle={t.labels_from === "dataset" ? "Historical record — category and intent are the dataset's own labels" :
+                t.labels_from === "human" ? "Category corrected by a person" : t.model_version ?? undefined}
             />
             <div className="p-4">
-              <TriageView category={c.category} categoryConfidence={c.labels_from === "model" ? c.category_confidence : null}
-                intent={c.intent} intentConfidence={c.labels_from === "model" ? c.intent_confidence : null}
-                sentiment={c.sentiment} sentimentScore={c.sentiment_score} priority={c.priority} reasons={c.priority_reasons} entities={c.entities} />
-              <CategoryCorrection ticket={c} />
+              <TriageView category={t.category} categoryConfidence={t.labels_from === "model" ? t.category_confidence : null}
+                intent={t.intent} intentConfidence={t.labels_from === "model" ? t.intent_confidence : null}
+                sentiment={t.sentiment} sentimentScore={t.sentiment_score} priority={t.priority} reasons={t.priority_reasons} entities={t.entities} />
+              {!done && t.allowed_actions.length > 0 && <CategoryCorrection ticket={t} />}
             </div>
           </Card>
 
-          <CopilotPanel ticket={c} />
+          <CopilotPanel ticket={t} />
+          <Conversation ticket={t} />
         </div>
 
         <aside className="space-y-5">
           <Card>
+            <CardHeader title="Assignment" icon={<Users className="h-4 w-4" />} />
+            <dl className="space-y-3 px-4 py-3 text-sm">
+              <div>
+                <dt className="text-xs text-slate-500">Assignee</dt>
+                <dd className="mt-1 flex items-center gap-2 text-slate-800">
+                  {t.assignee ? <><Avatar name={t.assignee.name} size="sm" />{t.assignee.name}</> : <span className="text-amber-700">Unassigned</span>}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-xs text-slate-500">Team</dt>
+                <dd className="mt-0.5 text-slate-800">{t.team?.name ?? <span className="text-slate-400">Not routed</span>}</dd>
+              </div>
+              {t.escalated_at && (
+                <div>
+                  <dt className="text-xs text-slate-500">Escalated</dt>
+                  <dd className="mt-0.5 text-rose-700">{fmtDateTime(t.escalated_at)}</dd>
+                </div>
+              )}
+            </dl>
+          </Card>
+
+          <CustomerCard ticket={t} />
+
+          <Card>
             <CardHeader title="Details" />
             <dl className="divide-y divide-slate-100 px-4 py-1 text-sm">
               {[
-                ["Channel", c.channel],
-                ["Customer", c.customer_name ?? "—"],
-                ["Order", c.order_id ?? "—"],
-                ["Product", c.product ?? "—"],
-                ["Amount", fmtInr(c.amount_inr)],
-                ["City", c.city ?? "—"],
-                ["CSAT", c.csat_score ? `${c.csat_score} / 5` : "—"],
-                ["Source", c.source === "dataset" ? "Historical dataset" : "Logged in app"],
-                ["First response", fmtDateTime(c.first_response_at)],
-                ["Resolved", fmtDateTime(c.resolved_at)],
+                ["Channel", t.channel],
+                ["Order", t.order_id ?? "—"],
+                ["Product", t.product ?? "—"],
+                ["Amount", fmtInr(t.amount_inr)],
+                ["City", t.city ?? "—"],
+                ["CSAT", t.csat_score ? `${t.csat_score} / 5` : "—"],
+                ["Source", t.source === "dataset" ? "Historical dataset" : "Created in app"],
+                ["First response", fmtDateTime(t.first_response_at)],
+                ["Resolved", fmtDateTime(t.resolved_at)],
+                ["Closed", fmtDateTime(t.closed_at)],
               ].map(([k, v]) => (
                 <div key={k} className="flex justify-between gap-3 py-1.5">
                   <dt className="text-slate-500">{k}</dt>
@@ -96,22 +133,53 @@ export function TicketDetailPage() {
               ))}
             </dl>
           </Card>
+
+          <Timeline events={t.timeline} />
         </aside>
       </div>
     </div>
   );
 }
 
-function StatusControl({ ticket }: { ticket: TicketDetail }) {
-  const update = useUpdateTicket(ticket.id);
+function CustomerCard({ ticket }: { ticket: TicketDetail }) {
+  const c = ticket.customer;
   return (
-    <div className="flex items-center gap-2">
-      <label htmlFor="status" className="text-xs text-slate-500">Status</label>
-      <Select id="status" className="w-36" value={ticket.status} disabled={update.isPending}
-        onChange={(e) => update.mutate({ status: e.target.value })}>
-        {["Open", "In Progress", "Resolved"].map((s) => <option key={s}>{s}</option>)}
-      </Select>
-    </div>
+    <Card>
+      <CardHeader title="Customer" icon={<UserRound className="h-4 w-4" />} subtitle={c ? c.customer_code : undefined} />
+      {!c ? (
+        <p className="px-4 py-3 text-sm text-slate-500">
+          {ticket.source === "dataset" ? "Historical record — the dataset has no customer identifiers." : "No customer linked to this ticket."}
+        </p>
+      ) : (
+        <div className="px-4 py-3 text-sm">
+          <div className="flex items-center gap-2">
+            <Avatar name={c.name} size="sm" />
+            <div>
+              <p className="font-medium text-slate-900">{c.name}</p>
+              <p className="text-xs text-slate-500">{c.segment}{c.region ? ` · ${c.region} region` : ""} · customer since {fmtDate(c.created_at)}</p>
+            </div>
+          </div>
+          <p className="mb-1.5 mt-3 text-xs font-medium text-slate-500">Previous tickets ({ticket.previous_tickets.length})</p>
+          {ticket.previous_tickets.length === 0 ? (
+            <p className="text-xs text-slate-400">This is the customer's first ticket.</p>
+          ) : (
+            <ul className="space-y-1.5">
+              {ticket.previous_tickets.map((p) => (
+                <li key={p.id}>
+                  <Link to={`/tickets/${p.id}`} className="flex items-center justify-between gap-2 rounded px-1 py-0.5 hover:bg-slate-50">
+                    <span className="min-w-0">
+                      <span className="font-mono text-xs text-slate-500">{p.ticket_number}</span>
+                      <span className="block truncate text-xs text-slate-700">{p.subject}</span>
+                    </span>
+                    <StatusBadge status={p.status} />
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </Card>
   );
 }
 
@@ -205,7 +273,7 @@ const ERROR_TITLES: Record<string, string> = {
   network_error: "Backend unreachable",
 };
 
-/** Clear, non-crashing message for a failed insight request. The previous insight (if any) stays visible. */
+/** Clear, non-crashing message for a failed copilot request. The previous output (if any) stays visible. */
 function InsightError({ error }: { error: Error }) {
   const api = error instanceof ApiError ? error : undefined;
   const title = (api?.code && ERROR_TITLES[api.code]) || "Couldn't generate insights";

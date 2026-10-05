@@ -1,5 +1,14 @@
 export type Priority = "Low" | "Medium" | "High" | "Critical";
-export type Status = "Open" | "In Progress" | "Resolved";
+export type Status = "NEW" | "TRIAGED" | "ASSIGNED" | "IN_PROGRESS" | "WAITING_CUSTOMER" | "ESCALATED" | "RESOLVED" | "CLOSED";
+export const STATUSES: Status[] = ["NEW", "TRIAGED", "ASSIGNED", "IN_PROGRESS", "WAITING_CUSTOMER", "ESCALATED", "RESOLVED", "CLOSED"];
+export const OPEN_STATUSES: Status[] = ["NEW", "TRIAGED", "ASSIGNED", "IN_PROGRESS", "WAITING_CUSTOMER", "ESCALATED"];
+
+export type TicketAction = "assign" | "start" | "wait_customer" | "resume" | "escalate" | "resolve" | "close" | "reopen";
+
+export interface UserRef {
+  id: number;
+  name: string;
+}
 
 export interface Page<T> {
   items: T[];
@@ -24,7 +33,11 @@ export interface Ticket {
   description_source: "customer" | "dataset_remark" | "template";
   customer_name: string | null;
   city: string | null;
+  assignee: UserRef | null;
+  team: TeamRef | null;
+  escalated_at: string | null;
   created_at: string;
+  updated_at: string;
 }
 
 export interface Entities {
@@ -73,28 +86,92 @@ export interface Analysis {
   created_at: string;
 }
 
+export interface Comment {
+  id: number;
+  body: string;
+  ai_assisted: boolean;
+  author: UserRef | null;
+  created_at: string;
+}
+
+export interface Attachment {
+  id: number;
+  filename: string;
+  content_type: string;
+  size_bytes: number;
+  uploaded_by: UserRef | null;
+  created_at: string;
+}
+
+export interface TimelineEvent {
+  id: number;
+  event_type: string;
+  actor: UserRef | null;
+  metadata: Record<string, unknown> | null;
+  created_at: string;
+}
+
+export interface Customer {
+  id: number;
+  customer_code: string;
+  name: string;
+  segment: string;
+  region: string | null;
+  created_at: string;
+}
+
+export interface PreviousTicket {
+  id: number;
+  ticket_number: string;
+  subject: string;
+  status: Status;
+  category: string | null;
+  created_at: string;
+}
+
 export interface TicketDetail extends Ticket {
   description: string;
   order_id: string | null;
   product: string | null;
   amount_inr: number | null;
   csat_score: number | null;
-  updated_at: string;
+  resolution: string | null;
+  reopen_count: number;
   first_response_at: string | null;
   resolved_at: string | null;
+  closed_at: string | null;
   intent_confidence: number | null;
   sentiment_score: number | null;
   priority_reasons: PriorityReason[] | null;
   entities: Entities | null;
   labels_from: "model" | "dataset" | "human";
   model_version: string | null;
+  customer: Customer | null;
   copilot: Analysis | null;
+  comments: Comment[];
+  attachments: Attachment[];
+  timeline: TimelineEvent[];
+  previous_tickets: PreviousTicket[];
+  allowed_actions: TicketAction[];
+}
+
+export interface TicketSummary {
+  by_status: Record<Status, number>;
+  open: number;
+}
+
+export interface TeamMember {
+  id: number;
+  name: string;
+  role: Role;
+  open_tickets: number;
 }
 
 export interface TicketInput {
   subject?: string;
   description: string;
   channel: string;
+  customer_code?: string;
   customer_name?: string;
   order_id?: string;
   product?: string;

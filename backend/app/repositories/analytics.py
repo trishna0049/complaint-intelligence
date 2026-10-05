@@ -8,12 +8,14 @@ from typing import Any
 from sqlalchemy import Date, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.lifecycle import OPEN_STATUSES
 from app.models import Ticket
 from app.repositories.tickets import priority_rank
 
 NEGATIVE = ("Very Negative", "Negative")
 SENTIMENTS = ["Very Negative", "Negative", "Neutral", "Positive", "Very Positive"]
 HIGH = ("High", "Critical")
+OPEN = sorted(s.value for s in OPEN_STATUSES)
 
 
 async def kpis(db: AsyncSession, start: datetime, end: datetime) -> dict[str, Any]:
@@ -22,7 +24,7 @@ async def kpis(db: AsyncSession, start: datetime, end: datetime) -> dict[str, An
         await db.execute(
             select(
                 func.count(),
-                func.count().filter(Ticket.status != "Resolved"),
+                func.count().filter(Ticket.status.in_(OPEN)),
                 func.count().filter(Ticket.priority.in_(HIGH)),
                 func.count().filter(Ticket.priority == "Critical"),
                 func.count().filter(is_negative),
@@ -55,7 +57,7 @@ async def open_counts(db: AsyncSession) -> tuple[int, int]:
             select(
                 func.count().filter(Ticket.needs_review.is_(True)),
                 func.count().filter(Ticket.priority.in_(HIGH)),
-            ).where(Ticket.status != "Resolved")
+            ).where(Ticket.status.in_(OPEN))
         )
     ).one()
     return row[0] or 0, row[1] or 0
@@ -131,7 +133,7 @@ async def sentiment_distribution(db: AsyncSession, since: datetime) -> dict[str,
 async def open_high_priority(db: AsyncSession, limit: int = 8) -> list[Ticket]:
     rows = await db.scalars(
         select(Ticket)
-        .where(Ticket.status != "Resolved", Ticket.priority.in_(HIGH))
+        .where(Ticket.status.in_(OPEN), Ticket.priority.in_(HIGH))
         .order_by(priority_rank().desc(), Ticket.created_at.desc())
         .limit(limit)
     )

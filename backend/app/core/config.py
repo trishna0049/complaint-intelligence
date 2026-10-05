@@ -38,6 +38,10 @@ class Settings(BaseSettings):
     seed_admin_password: str = "Admin@12345"
     seed_agent_password: str = "Agent@12345"
 
+    # --- attachments ---
+    attachments_dir: Path = REPO_DIR / "var" / "attachments"
+    max_attachment_mb: int = 10
+
     # --- AI ---
     llm_provider: Literal["mock", "openai"] = "mock"
     openai_api_key: str = ""

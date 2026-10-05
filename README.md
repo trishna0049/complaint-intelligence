@@ -67,11 +67,23 @@ and are renewed automatically from an HttpOnly refresh cookie; reusing an old re
    sentiment, priority with the rules that fired, extracted entities), then **Save**.
    Try *Fill example*: "I was charged twice for my order of ₹12,500 and have already contacted support three
    times…" → Payments related · Very Negative · ₹12,500 · repeat contact → **Critical**.
-3. **Complaint detail** — **Generate insights** for an LLM summary, key issues, recommended actions and a draft
-   reply (copied by the agent, never sent automatically). Correct the category if the model was wrong — priority
-   is recomputed by the rules. Change status Open → In Progress → Resolved.
-4. **Complaints** — search and filter 85k+ complaints by status, category, sentiment, priority, source or
-   "needs review".
+3. **Ticket details (the agent's workspace)** — complaint, customer profile and previous tickets, AI triage,
+   copilot (LLM summary, key issues, recommended actions and a draft reply — never sent automatically), comments,
+   attachments and the full timeline. Correct the category if the model was wrong — priority is recomputed by the
+   rules. The action bar shows only the moves the current user may make right now.
+4. **Lifecycle** — 8 states: `NEW → TRIAGED → ASSIGNED → IN_PROGRESS ⇄ WAITING_CUSTOMER`, `ESCALATED`, `RESOLVED →
+   CLOSED`, reopen from RESOLVED/CLOSED. The allowed moves live in one place
+   ([backend/app/domain/lifecycle.py](backend/app/domain/lifecycle.py)); anything else returns HTTP 409. Every change
+   is written to `ticket_events` (the timeline) and sensitive ones (reassign, escalate, close someone else's ticket,
+   reopen) to `audit_logs`, in the same transaction.
+5. **Ticket queue** — saved views (all open, unassigned, assigned to me, escalated, needs review, resolved & closed)
+   plus search and filters over 85k+ tickets. Admins see everything; agents see their own, their team's and the
+   tickets they created (other tickets return 404).
+6. **My work** — the agent's start page: open tickets by state, highest priority first, and the team's unassigned
+   backlog.
+
+Permissions follow the spec: agents work on own/team tickets and may reassign within their team; reassigning to
+another team and closing someone else's ticket are Admin only.
 
 ## ML results
 
@@ -108,8 +120,13 @@ needs `Authorization: Bearer <access token>`; Admin-only routes return 403 for a
 |---|---|---|
 | POST | `/ai/analyze` | Run the NLP triage pipeline on a text without saving |
 | POST | `/tickets` | Create a ticket (`INC-00001` …); triage runs automatically and is recorded in `ai_analyses` |
-| GET | `/tickets` | List with `q`, `status`, `category`, `sentiment`, `priority`, `channel`, `source`, `needs_review`, `sort`, `page` |
-| GET / PATCH | `/tickets/{id}` | Detail · update `status` or correct `category` |
+| GET | `/tickets` | Queue (scoped to the caller) with `q`, `status` (comma list or `open`), `assignee` (`me`/`none`/id), `team_id`, `escalated`, `category`, `sentiment`, `priority`, `channel`, `source`, `needs_review`, `sort`, `page` |
+| GET | `/tickets/summary` | Ticket counts per state within the caller's scope (accepts the same filters) |
+| GET / PATCH | `/tickets/{id}` | Detail workspace (comments, attachments, timeline, customer, previous tickets, `allowed_actions`) · PATCH `status` (`IN_PROGRESS` / `WAITING_CUSTOMER`: start, wait, resume) or correct `category` |
+| POST | `/tickets/{id}/assign`, `/escalate`, `/resolve`, `/close`, `/reopen` | Lifecycle actions (illegal moves → 409, missing permission → 403) |
+| GET / POST | `/tickets/{id}/comments` · `/tickets/{id}/timeline` | Comments (first one sets `first_response_at`) · event timeline |
+| POST / GET | `/tickets/{id}/attachments` · `/attachments/{aid}` | Upload (allow-listed types, content sniffed, 10 MB) · download |
+| GET | `/teams/{id}/members` | Active members with their open-ticket load (agents: own team) |
 | POST | `/ai/draft-response` | Copilot for `{ticket_id}`: LLM summary, key issues, recommended actions, draft reply |
 | GET | `/analytics/overview`, `/trends?granularity=day\|week\|month`, `/categories`, `/emerging` | Dashboard analytics (Redis-cached) |
 | GET | `/health` | Model versions in use (public) |
@@ -122,13 +139,15 @@ Interactive docs: http://localhost:18000/docs
 ## Project layout
 
 ```
-backend/app/        FastAPI app — api/ (routes), services/ (complaints, dashboard SQL), ai/ (triage, classifier,
-                    sentiment, entities, priority, pii, llm), models.py, schemas.py
-backend/scripts/    prepare_db.py (create + migrate), import_dataset.py
+backend/app/        FastAPI app — api/v1/ (routes), domain/ (ticket state machine), services/ (business rules),
+                    repositories/ (SQL), models/, schemas/, auth/, core/, ai/ (triage, classifier, sentiment,
+                    entities, priority, pii, llm)
+backend/scripts/    prepare_db.py (create + migrate), seed.py (org + users), import_dataset.py
 backend/migrations/ Alembic migrations
 ml/                 profile_dataset.py, train_classifiers.py, eval_sentiment.py, reports/, MODEL_CARD.md
-frontend/src/       pages/ (Dashboard, Complaints, NewComplaint, ComplaintDetail), components/, api/
-tests/backend/      pytest (AI components, API, dashboard)
+frontend/src/       pages/ (Dashboard, MyWork, Tickets, NewTicket, TicketDetail, Login, admin/), components/ (ticket/:
+                    ActionBar, Conversation, Timeline), api/, auth/
+tests/backend/      pytest (AI components, API, auth/permissions, lifecycle, dashboard)
 tests/e2e/          Playwright end-to-end test of the full complaint flow
 docs/               DATA_PROFILE.md, ARCHITECTURE.md, PRIORITY_RULES.md
 scripts/dev.ps1     all developer commands

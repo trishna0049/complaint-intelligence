@@ -9,6 +9,7 @@ import { TeamsPage } from "@/pages/admin/TeamsPage";
 import { UsersPage } from "@/pages/admin/UsersPage";
 import { DashboardPage } from "@/pages/DashboardPage";
 import { LoginPage } from "@/pages/LoginPage";
+import { MyWorkPage } from "@/pages/MyWorkPage";
 import { NewTicketPage } from "@/pages/NewTicketPage";
 import { TicketDetailPage } from "@/pages/TicketDetailPage";
 import { TicketsPage } from "@/pages/TicketsPage";
@@ -33,6 +34,7 @@ export default function App() {
       <Route element={<RequireAuth />}>
         <Route element={<Layout />}>
           <Route index element={<Home />} />
+          <Route path="my-work" element={<MyWorkPage />} />
           <Route path="tickets" element={<TicketsPage />} />
           <Route path="tickets/new" element={<NewTicketPage />} />
           <Route path="tickets/:id" element={<TicketDetailPage />} />

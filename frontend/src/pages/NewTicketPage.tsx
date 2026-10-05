@@ -10,6 +10,7 @@ const EXAMPLE = {
   subject: "Charged twice for my order",
   description: "I was charged twice for my order of ₹12,500 and have already contacted support three times. Nobody has fixed it and I am really frustrated.",
   channel: "Email",
+  customer_code: "",
   customer_name: "Ravi Kumar",
   order_id: "OD48213377",
   product: "Mobile",
@@ -17,7 +18,7 @@ const EXAMPLE = {
   city: "Pune",
 };
 
-const EMPTY = { subject: "", description: "", channel: "Web", customer_name: "", order_id: "", product: "", amount_inr: "", city: "" };
+const EMPTY = { subject: "", description: "", channel: "Web", customer_code: "", customer_name: "", order_id: "", product: "", amount_inr: "", city: "" };
 
 export function NewTicketPage() {
   const navigate = useNavigate();
@@ -38,7 +39,8 @@ export function NewTicketPage() {
       subject: form.subject || undefined,
       description: form.description.trim(),
       channel: form.channel,
-      customer_name: form.customer_name || undefined,
+      customer_code: form.customer_code.trim() || undefined,
+      customer_name: form.customer_code.trim() ? undefined : form.customer_name || undefined,
       order_id: form.order_id || undefined,
       product: form.product || undefined,
       amount_inr: form.amount_inr ? Number(form.amount_inr) : undefined,
@@ -89,8 +91,11 @@ export function NewTicketPage() {
                     {["Web", "Email", "Inbound", "Outcall"].map((c) => <option key={c}>{c}</option>)}
                   </Select>
                 </Field>
-                <Field label="Customer name" htmlFor="customer_name">
-                  <Input id="customer_name" value={form.customer_name} onChange={set("customer_name")} />
+                <Field label="Customer code" htmlFor="customer_code" hint="Existing customer, e.g. CUS-00012">
+                  <Input id="customer_code" value={form.customer_code} onChange={set("customer_code")} placeholder="CUS-…" />
+                </Field>
+                <Field label="Customer name" htmlFor="customer_name" hint={form.customer_code ? "Taken from the customer record" : "Creates a customer record"}>
+                  <Input id="customer_name" value={form.customer_name} onChange={set("customer_name")} disabled={!!form.customer_code.trim()} />
                 </Field>
                 <Field label="City" htmlFor="city">
                   <Input id="city" value={form.city} onChange={set("city")} />

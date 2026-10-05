@@ -26,4 +26,4 @@ async def draft_response(
     body: DraftResponseRequest, user: CurrentUser, db: AsyncSession = Depends(get_session)
 ) -> AnalysisOut:
     """Copilot: LLM summary, key issues, recommended actions and a draft reply for a ticket (PII masked first)."""
-    return AnalysisOut.model_validate(await svc.generate_copilot(db, body.ticket_id))
+    return AnalysisOut.model_validate(await svc.generate_copilot(db, user, body.ticket_id))

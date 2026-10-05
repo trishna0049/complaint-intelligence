@@ -100,14 +100,13 @@ async def test_list_filters_search_and_pagination(client):
     assert (await client.get("/api/v1/tickets", params={"sort": "bogus"})).status_code == 422
 
 
-async def test_update_status_and_category_correction(client):
+async def test_category_correction_recomputes_priority(client):
     tid = (await client.post("/api/v1/tickets", json={"description": "hello there general question"})).json()["id"]
-    res = await client.patch(f"/api/v1/tickets/{tid}", json={"status": "Resolved"})
-    assert res.json()["status"] == "Resolved" and res.json()["resolved_at"]
     res = await client.patch(f"/api/v1/tickets/{tid}", json={"category": "Refund Related"})
     body = res.json()
     assert body["category"] == "Refund Related" and body["labels_from"] == "human" and body["needs_review"] is False
     assert body["priority"] in ("High", "Critical")  # Refund base priority is High
+    assert body["timeline"][-1]["event_type"] == "category_corrected"
     assert (await client.patch(f"/api/v1/tickets/{tid}", json={"category": "Nope"})).status_code == 422
     assert (await client.get("/api/v1/tickets/9999")).status_code == 404
 
@@ -140,7 +139,7 @@ async def seed_refund_history() -> None:
                     intent="Refund Enquiry",
                     sentiment="Negative",
                     priority="High",
-                    status="Open",
+                    status="IN_PROGRESS",
                     csat_score=2,
                     created_at=now - timedelta(days=1, minutes=i),
                 )
@@ -154,7 +153,7 @@ async def seed_refund_history() -> None:
                     intent="Refund Enquiry",
                     sentiment="Positive",
                     priority="Medium",
-                    status="Resolved",
+                    status="CLOSED",
                     csat_score=5,
                     created_at=now - timedelta(days=9, minutes=i),
                 )

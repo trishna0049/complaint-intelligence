@@ -11,7 +11,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.priority import BASE_PRIORITY
 from app.auth.security import hash_password
+from app.domain.lifecycle import OPEN_STATUSES
 from app.models import Category, Department, Team, User
+from app.repositories import tickets as tickets_repo
 from app.repositories import users as repo
 from app.schemas.auth import (
     CategoryCreate,
@@ -310,3 +312,18 @@ async def delete_category(db: AsyncSession, actor: User, category_id: int) -> No
         metadata={"name": name},
     )
     await _commit(db, "The category is still referenced and can't be deleted.")
+
+
+# ------------------------------------------------------------------------------------------------ team members
+async def team_members(db: AsyncSession, actor: User, team_id: int) -> list[dict[str, Any]]:
+    """Active members of a team with their open-ticket load (assignment picker; routing shows the same numbers).
+    Agents may only list their own team."""
+    if await repo.get_team(db, team_id) is None:
+        raise _not_found("Team")
+    if actor.role != "ADMIN" and actor.team_id != team_id:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, detail={"code": "forbidden", "message": "You can only list your own team."}
+        )
+    members, _ = await repo.search(db, team_id=team_id, active=True, page_size=10_000)
+    load = await tickets_repo.open_load(db, [m.id for m in members], [s.value for s in OPEN_STATUSES])
+    return [{"id": m.id, "name": m.name, "role": m.role, "open_tickets": load.get(m.id, 0)} for m in members]

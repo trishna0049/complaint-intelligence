@@ -2,25 +2,13 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "@/App";
-import type { Analysis, CategoryBreakdowns, Emerging, Overview, TicketDetail, Trends } from "@/api/types";
+import type { Analysis, CategoryBreakdowns, Emerging, Overview, Trends } from "@/api/types";
 import { ConfidenceMeter, PriorityBadge } from "@/components/Badges";
+import { ticket } from "@/test/fixtures";
 import { adminUser, mockFetch, renderRoute, signedInAs } from "@/test/utils";
 
 afterEach(() => vi.unstubAllGlobals());
 
-const ticket: TicketDetail = {
-  id: 1, ticket_number: "INC-00001", subject: "Charged twice for my order", channel: "Email", status: "Open",
-  category: "Payments related", intent: "Online Payment Issues", sentiment: "Very Negative", priority: "Critical",
-  category_confidence: 0.82, needs_review: false, source: "new", description_source: "customer", customer_name: "Ravi Kumar",
-  city: "Pune", created_at: new Date().toISOString(),
-  description: "I was charged twice for my order of ₹12,500 and have already contacted support three times.",
-  order_id: null, product: "Mobile", amount_inr: 12500, csat_score: null, updated_at: new Date().toISOString(),
-  first_response_at: null, resolved_at: null, intent_confidence: 0.4,
-  sentiment_score: 1.3, priority_reasons: [{ rule: "BASE", reason: "Base priority for Payments related", from: "", to: "High" },
-    { rule: "R1", reason: "Very negative sentiment", from: "High", to: "Critical" }],
-  entities: { amounts: [{ text: "₹12,500", value: 12500 }], max_amount_inr: 12500, order_ids: [], dates: [], products: [], repeat_contact: true },
-  labels_from: "model", model_version: "triage-v1", copilot: null,
-};
 
 const overview: Overview = {
   window_days: 30, generated_at: new Date().toISOString(),

@@ -2,17 +2,31 @@
 
 from app.models.auth import AuditLog, RefreshToken
 from app.models.org import ROLES, Category, Department, Team, User
-from app.models.ticket import TICKET_NUMBER_SEQ, AIAnalysis, Ticket
+from app.models.ticket import (
+    CUSTOMER_CODE_SEQ,
+    TICKET_NUMBER_SEQ,
+    AIAnalysis,
+    Customer,
+    Ticket,
+    TicketAttachment,
+    TicketComment,
+    TicketEvent,
+)
 
 __all__ = [
+    "CUSTOMER_CODE_SEQ",
     "ROLES",
     "TICKET_NUMBER_SEQ",
     "AIAnalysis",
     "AuditLog",
     "Category",
+    "Customer",
     "Department",
     "RefreshToken",
     "Team",
     "Ticket",
+    "TicketAttachment",
+    "TicketComment",
+    "TicketEvent",
     "User",
 ]

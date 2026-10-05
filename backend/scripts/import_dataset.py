@@ -9,6 +9,10 @@
 * Empty remarks get a templated description (description_source='template', excluded from model training).
 * `Issue_reported at` becomes created_at and `issue_responded` the first-response time (also used as the
   resolution time: every historical contact was closed in that interaction).
+* Every historical contact was handled and surveyed, so imported tickets are CLOSED.
+* After the insert, `link_history` sets each ticket's assignee (the dataset's Agent_name, seeded as a user by
+  scripts/seed.py) and team (the team that owns the ticket's category). It only fills empty links, so it is safe
+  to re-run — run the seed first, or re-run the import after seeding to link existing rows.
 * Timestamps are shifted by whole days so the newest record lands yesterday, which keeps the dashboard's
   "last 7 / 30 days" and "this week vs last week" views meaningful (relative spacing is preserved).
 
@@ -24,13 +28,14 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
-from sqlalchemy import select
+from sqlalchemy import column, select, table, text, update
 from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.priority import decide_priority
 from app.core.config import REPO_DIR, get_settings
 from app.core.db import SessionLocal, dispose_engine
-from app.models import Ticket
+from app.models import Category, Ticket, User
 
 TS = "%d/%m/%Y %H:%M"
 
@@ -100,12 +105,13 @@ async def run(csv_path: Path, limit: int | None = None, shift_to_now: bool = Tru
                     "product": None if pd.isna(r.product) else r.product,
                     "amount_inr": amount,
                     "city": None if pd.isna(r.city) else str(r.city).strip().title(),
-                    "status": "Resolved",
+                    "status": "CLOSED",
                     "csat_score": int(r.csat),
                     "created_at": created,
                     "updated_at": responded or created,
                     "first_response_at": responded,
                     "resolved_at": responded or created,
+                    "closed_at": responded or created,
                     "category": r.category,
                     "intent": r.intent,
                     "sentiment": sentiment,
@@ -128,11 +134,48 @@ async def run(csv_path: Path, limit: int | None = None, shift_to_now: bool = Tru
             inserted += len(result.all())
             await db.commit()
             print(f"imported {min(i + batch, len(rows)):,} / {len(rows):,}")
+        linked = await link_history(db, df[["Unique id", "Agent_name"]])
     await dispose_engine()
     print(
+        f"linked {linked['assignee']:,} tickets to their agent and {linked['team']:,} to a team; "
         f"done: {inserted:,} new rows ({len(df) - len(rows):,} already present) in {time.perf_counter() - started:.1f}s"
     )
     return inserted
+
+
+async def link_history(db: AsyncSession, agents: pd.DataFrame, batch: int = 10_000) -> dict[str, int]:
+    """Fill tickets.assignee_id from Agent_name and tickets.team_id from the category's owning team (idempotent)."""
+    users = {
+        name: uid for uid, name in (await db.execute(select(User.id, User.name).where(User.source == "dataset"))).all()
+    }
+    team_rows = await db.execute(
+        update(Ticket)
+        .where(Ticket.team_id.is_(None), Ticket.category == Category.name, Category.team_id.is_not(None))
+        .values(team_id=Category.team_id)
+    )
+    if not users:
+        await db.commit()
+        print("note: no dataset agents found - run scripts.seed, then re-run the import to link assignees")
+        return {"assignee": 0, "team": team_rows.rowcount or 0}
+    pairs = [
+        {"external_id": uid, "assignee_id": users[name]}
+        for uid, name in agents.dropna().itertuples(index=False)
+        if name in users
+    ]
+    await db.execute(
+        text("CREATE TEMP TABLE _assign (external_id varchar(64) PRIMARY KEY, assignee_id int) ON COMMIT DROP")
+    )
+    tmp = table("_assign", column("external_id"), column("assignee_id"))
+    for i in range(0, len(pairs), batch):
+        await db.execute(tmp.insert(), pairs[i : i + batch])
+    assigned = await db.execute(
+        text(
+            "UPDATE tickets t SET assignee_id = a.assignee_id FROM _assign a "
+            "WHERE t.external_id = a.external_id AND t.assignee_id IS NULL"
+        )
+    )
+    await db.commit()
+    return {"assignee": assigned.rowcount or 0, "team": team_rows.rowcount or 0}
 
 
 def main() -> None:

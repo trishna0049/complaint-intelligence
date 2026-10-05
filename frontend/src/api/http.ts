@@ -109,7 +109,7 @@ async function toError(res: Response): Promise<ApiError> {
 
 export async function api<T>(
   path: string,
-  init: { method?: string; body?: unknown; query?: Query; form?: FormData; auth?: boolean } = {},
+  init: { method?: string; body?: unknown; query?: Query; form?: FormData; auth?: boolean; raw?: boolean } = {},
 ): Promise<T> {
   const qs = new URLSearchParams();
   for (const [k, v] of Object.entries(init.query ?? {})) if (v !== undefined && v !== null && v !== "") qs.set(k, String(v));
@@ -142,5 +142,6 @@ export async function api<T>(
   }
   if (!res.ok) throw await toError(res);
   if (res.status === 204) return undefined as T;
+  if (init.raw) return (await res.blob()) as T;
   return (await res.json()) as T;
 }

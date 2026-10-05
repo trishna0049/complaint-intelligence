@@ -145,7 +145,7 @@ export function DashboardPage() {
             </Card>
             <Card>
               <CardHeader title="Open high-priority tickets" icon={<AlertTriangle className="h-4 w-4 text-rose-500" />}
-                actions={<Link to="/tickets?status=Open&sort=priority" className="text-xs text-brand-600 hover:underline">View all</Link>} />
+                actions={<Link to="/tickets?sort=priority" className="text-xs text-brand-600 hover:underline">View all</Link>} />
               {data.high_priority_open.length === 0 ? (
                 <EmptyState title="Nothing urgent" description="No open high or critical tickets." />
               ) : (

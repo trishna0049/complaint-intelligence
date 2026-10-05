@@ -1,6 +1,7 @@
 /**
  * The core user flow: dashboard → create ticket → AI triage preview → save → AI copilot →
- * find it in the ticket list and on the dashboard → resolve it.
+ * find it in the ticket list and on the dashboard → assign → start → comment + attachment → resolve → close,
+ * with every step on the ticket timeline.
  */
 import { expect, test } from "@playwright/test";
 
@@ -56,19 +57,55 @@ test("ticket is triaged, summarised, tracked on the dashboard and resolved", asy
   await expect(row).toContainText("Payments related");
   await expect(row).toContainText("Very Negative");
   await expect(row).toContainText("Critical");
-  await expect(row).toContainText("Open");
+  await expect(row).toContainText("Triaged");
+  await expect(row).toContainText("Unassigned");
 
   // 6. Dashboard: it appears among the open high-priority tickets.
   await nav("Dashboard").click();
   const hot = page.locator("div.rounded-lg", { has: page.getByText("Open high-priority tickets") });
   await expect(hot.getByText(subject)).toBeVisible();
 
-  // 7. Resolve it: status updates and it leaves the open high-priority list.
+  // 7. Work it through the lifecycle from the ticket workspace.
   await page.goto(ticketUrl);
-  await page.getByLabel("Status").selectOption("Resolved");
-  await expect(page.getByLabel("Status")).toHaveValue("Resolved");
-  await expect(page.locator("dt", { hasText: "Resolved" }).locator("xpath=following-sibling::dd")).not.toHaveText("—");
+  const actions = page.getByRole("toolbar", { name: "Ticket actions" });
+  await expect(actions.getByRole("button", { name: "Close" })).toHaveCount(0); // not allowed from TRIAGED
 
+  await actions.getByRole("button", { name: "Assign" }).click();
+  const assign = page.getByRole("dialog", { name: /^Assign INC-/ });
+  await assign.getByLabel("Team").selectOption({ label: "Payments Support" });
+  const agents = assign.getByRole("radiogroup", { name: "Agent" });
+  await expect(agents.getByText("Least busy")).toBeVisible();
+  await agents.getByRole("radio").first().check();
+  await assign.getByLabel("Note (optional)").fill("Duplicate debit, high value");
+  await assign.getByRole("button", { name: "Assign" }).click();
+  await expect(assign).toBeHidden();
+  await expect(page.getByText("Assigned", { exact: true }).first()).toBeVisible();
+
+  await actions.getByRole("button", { name: "Start work" }).click();
+  await expect(actions.getByRole("button", { name: "Wait on customer" })).toBeVisible();
+
+  await page.getByLabel("Add a comment").fill("Confirmed the duplicate debit with the gateway.");
+  await page.getByRole("button", { name: "Add comment" }).click();
+  await expect(page.getByText("Confirmed the duplicate debit with the gateway.")).toBeVisible();
+  await page.getByLabel("Attach a file").setInputFiles({ name: "statement.txt", mimeType: "text/plain", buffer: Buffer.from("txn 1 and txn 2") });
+  await expect(page.getByRole("button", { name: /statement\.txt/ })).toBeVisible();
+
+  await actions.getByRole("button", { name: "Resolve" }).click();
+  const resolve = page.getByRole("dialog", { name: /^Resolve INC-/ });
+  await resolve.getByLabel("Resolution").fill("Reversed the duplicate ₹12,500 debit.");
+  await resolve.getByRole("button", { name: "Resolve" }).click();
+  await expect(resolve).toBeHidden();
+  await expect(page.getByText("Reversed the duplicate ₹12,500 debit.").first()).toBeVisible();
+  await actions.getByRole("button", { name: "Close" }).click();
+  await expect(actions.getByRole("button", { name: "Reopen" })).toBeVisible();
+
+  const timeline = page.getByRole("list", { name: "Ticket timeline" });
+  for (const text of ["created the ticket", "AI triage: Payments related", "assigned it to", "to In progress", "commented",
+    "attached statement.txt", "to Resolved", "to Closed"]) {
+    await expect(timeline).toContainText(text);
+  }
+
+  // 8. It has left the open high-priority list on the dashboard.
   await nav("Dashboard").click();
   await expect(page.getByText("Ticket volume")).toBeVisible(); // dashboard data has rendered
   await expect(hot.getByText(subject)).toHaveCount(0);

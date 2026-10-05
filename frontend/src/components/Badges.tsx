@@ -1,7 +1,8 @@
 import { AlertOctagon, ArrowDown, ArrowUp, Minus } from "lucide-react";
-import type { Priority } from "@/api/types";
+import type { Priority, Status } from "@/api/types";
 import { Badge, type Tone } from "@/components/ui";
 import { SENTIMENT_COLORS } from "@/lib/colors";
+import { statusLabel } from "@/lib/status";
 
 const PRIORITY: Record<Priority, { tone: Tone; icon: typeof ArrowUp }> = {
   Critical: { tone: "red", icon: AlertOctagon },
@@ -39,12 +40,21 @@ export function SentimentBadge({ sentiment }: { sentiment: string | null }) {
   );
 }
 
-const STATUS_TONE: Record<string, Tone> = { Open: "violet", "In Progress": "brand", Resolved: "green" };
+const STATUS_TONE: Record<Status, Tone> = {
+  NEW: "slate",
+  TRIAGED: "violet",
+  ASSIGNED: "blue",
+  IN_PROGRESS: "brand",
+  WAITING_CUSTOMER: "amber",
+  ESCALATED: "red",
+  RESOLVED: "green",
+  CLOSED: "slate",
+};
 
-export function StatusBadge({ status }: { status: string }) {
+export function StatusBadge({ status }: { status: Status }) {
   return (
     <Badge tone={STATUS_TONE[status] ?? "slate"} dot>
-      {status}
+      {statusLabel(status)}
     </Badge>
   );
 }

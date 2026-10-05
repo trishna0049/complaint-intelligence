@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { BarChart3, Bot, Inbox, LogOut, Menu, Plus, Shapes, Users, UsersRound, X } from "lucide-react";
+import { BarChart3, Bot, Briefcase, Inbox, LogOut, Menu, Plus, Shapes, Users, UsersRound, X } from "lucide-react";
 import { useState, type ComponentType } from "react";
 import { NavLink, Outlet } from "react-router-dom";
 import { useHealth } from "@/api/client";
@@ -20,6 +20,7 @@ const SECTIONS: { title: string; items: NavItem[] }[] = [
     title: "Workspace",
     items: [
       { to: "/", label: "Dashboard", icon: BarChart3, end: true, roles: ["ADMIN"] },
+      { to: "/my-work", label: "My work", icon: Briefcase, end: true },
       { to: "/tickets", label: "Ticket queue", icon: Inbox, end: true },
       { to: "/tickets/new", label: "Create ticket", icon: Plus, end: true },
     ],

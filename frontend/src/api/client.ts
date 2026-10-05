@@ -1,6 +1,8 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
   Analysis,
+  Attachment,
+  Comment,
   CategoryBreakdowns,
   CategoryInfo,
   Department,
@@ -13,6 +15,8 @@ import type {
   TicketInput,
   Trends,
   TeamInfo,
+  TeamMember,
+  TicketSummary,
   TriagePreview,
   User,
   UserInput,
@@ -65,16 +69,78 @@ export function useCreateTicket() {
 export const useAnalyze = () =>
   useMutation({ mutationFn: (body: TicketInput) => api<TriagePreview>("/ai/analyze", { method: "POST", body }) });
 
-export function useUpdateTicket(id: number) {
+/** Any change that returns the updated ticket: PATCH (status / category) and the lifecycle actions. */
+function useTicketChange<TVars>(id: number, request: (vars: TVars) => Promise<TicketDetail>) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { status?: string; category?: string }) => api<TicketDetail>(`/tickets/${id}`, { method: "PATCH", body }),
+    mutationFn: request,
     onSuccess: (data) => {
       qc.setQueryData(["ticket", id], data);
       void qc.invalidateQueries({ queryKey: ["tickets"] });
+      void qc.invalidateQueries({ queryKey: ["ticket-summary"] });
       void qc.invalidateQueries({ queryKey: ["analytics"] });
+      void qc.invalidateQueries({ queryKey: ["team-members"] });
     },
   });
+}
+
+export const useUpdateTicket = (id: number) =>
+  useTicketChange(id, (body: { status?: "IN_PROGRESS" | "WAITING_CUSTOMER"; category?: string }) =>
+    api<TicketDetail>(`/tickets/${id}`, { method: "PATCH", body }));
+
+export const useAssign = (id: number) =>
+  useTicketChange(id, (body: { assignee_id: number; note?: string }) => api<TicketDetail>(`/tickets/${id}/assign`, { method: "POST", body }));
+
+export const useEscalate = (id: number) =>
+  useTicketChange(id, (reason: string) => api<TicketDetail>(`/tickets/${id}/escalate`, { method: "POST", body: { reason } }));
+
+export const useResolve = (id: number) =>
+  useTicketChange(id, (resolution: string) => api<TicketDetail>(`/tickets/${id}/resolve`, { method: "POST", body: { resolution } }));
+
+export const useClose = (id: number) => useTicketChange(id, () => api<TicketDetail>(`/tickets/${id}/close`, { method: "POST" }));
+
+export const useReopen = (id: number) =>
+  useTicketChange(id, (reason: string) => api<TicketDetail>(`/tickets/${id}/reopen`, { method: "POST", body: { reason } }));
+
+export const useTicketSummary = (query: Query = {}) =>
+  useQuery({ queryKey: ["ticket-summary", query], queryFn: () => api<TicketSummary>("/tickets/summary", { query }) });
+
+export const useTeamMembers = (teamId: number | null | undefined) =>
+  useQuery({
+    queryKey: ["team-members", teamId],
+    queryFn: () => api<TeamMember[]>(`/teams/${teamId}/members`),
+    enabled: !!teamId,
+  });
+
+export function useAddComment(id: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: string) => api<Comment>(`/tickets/${id}/comments`, { method: "POST", body: { body } }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["ticket", id] }),
+  });
+}
+
+export function useUploadAttachment(id: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (file: File) => {
+      const form = new FormData();
+      form.append("file", file);
+      return api<Attachment>(`/tickets/${id}/attachments`, { method: "POST", form });
+    },
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["ticket", id] }),
+  });
+}
+
+/** Attachments need the bearer token, so they are fetched with it and handed to the browser as a blob. */
+export async function downloadAttachment(ticketId: number, att: Attachment) {
+  const blob = await api<Blob>(`/tickets/${ticketId}/attachments/${att.id}`, { raw: true });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = att.filename;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 export function useDraftResponse(id: number) {

@@ -5,6 +5,8 @@ Categories can be *read* by every signed-in user (forms and filters need them); 
 
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -81,6 +83,12 @@ async def deactivate_user(user_id: int, admin: AdminUser, db: AsyncSession = Db)
 async def list_teams(_: CurrentUser, db: AsyncSession = Db) -> list[TeamOut]:
     """Readable by agents too (team pickers); member counts included."""
     return await svc.team_views(db)
+
+
+@teams.get("/{team_id}/members")
+async def team_members(team_id: int, user: CurrentUser, db: AsyncSession = Db) -> list[dict[str, Any]]:
+    """Active members and their open tickets. Agents: own team only."""
+    return await svc.team_members(db, user, team_id)
 
 
 @teams.post("", response_model=TeamOut, status_code=status.HTTP_201_CREATED)

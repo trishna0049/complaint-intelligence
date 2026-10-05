@@ -10,8 +10,8 @@ and committed locally before the next one starts.
 | 1 | Infrastructure — Compose (Postgres 16 + pgvector, Redis), async SQLAlchemy 2, Alembic, re-import | ✅ |
 | 2 | API alignment — `/api/v1`, tickets, `INC-` numbers, `/analytics/*` | ✅ |
 | 3 | Auth and roles — JWT + rotating refresh tokens, argon2, ADMIN/AGENT guards, admin screens | ✅ |
-| 4 | Full ticket lifecycle — 8 states, assign/escalate/resolve/close/reopen, comments, attachments, timeline, audit | ⏳ next |
-| 5 | Routing — category → team → least-busy agent; low-confidence review queue | ⏳ |
+| 4 | Full ticket lifecycle — 8 states, assign/escalate/resolve/close/reopen, comments, attachments, timeline, audit | ✅ |
+| 5 | Routing — category → team → least-busy agent; low-confidence review queue | ⏳ next |
 | 6 | Copilot completion — root cause, prompt_version, accept / regenerate / discard | ⏳ |
 | 7 | Retrieval — MiniLM embeddings, HNSW, hybrid search, similar tickets, knowledge base, RAG | ⏳ |
 | 8 | Events — Kafka (KRaft) + UI, outbox relay, 4 workers, idempotency, retries, DLQ + replay | ⏳ |
@@ -38,8 +38,12 @@ and committed locally before the next one starts.
   cookie (`ci_refresh`, path `/api/v1/auth`, rotated on every refresh, reuse revokes the family). Seeded by
   `.\scripts\dev.ps1 seed`: admin `admin@shopzilla.example` / `Admin@12345`, every dataset agent with
   `Agent@12345` (Payments Support demo agent: `alexander.saunders@shopzilla.example`).
-- Agents still see all tickets — scoping to own + team tickets is step 4 (by design of the plan).
-- Next: step 4 (full ticket lifecycle).
+- Lifecycle: 8 states, moves defined only in `backend/app/domain/lifecycle.py` (illegal → 409). Every change writes a
+  `ticket_events` row (timeline) — and `audit_logs` for reassign / escalate / close-other / reopen — in the same
+  transaction. Agents see own + team + created tickets (others → 404). Imported history is `CLOSED`, linked to its
+  dataset agent and the category's team.
+- New tickets are triaged on create (NEW → TRIAGED) but **not yet routed** (team/assignee empty) — that's step 5.
+- Next: step 5 (routing: category → team → least-busy agent, low-confidence review queue).
 
 ## Step log
 
@@ -93,3 +97,34 @@ and committed locally before the next one starts.
 - Checked by hand: screenshots of login, admin users/teams/categories, agent view and the agent's no-access page;
   curl run of login → refresh → old cookie within 10 s (409) → after 10 s (401, family revoked).
 - Tests: 72 backend (24 new auth/permission tests), 20 frontend (9 new), Playwright e2e signs in first.
+
+### Step 4 — Full ticket lifecycle ✅
+- `app/domain/lifecycle.py`: the 8 states (NEW, TRIAGED, ASSIGNED, IN_PROGRESS, WAITING_CUSTOMER, ESCALATED, RESOLVED,
+  CLOSED) and 9 actions with their source/target states — the only place moves are defined. Reopen goes back to the
+  owner (IN_PROGRESS) or the pool (TRIAGED). `SLA_PAUSED_STATUSES = {WAITING_CUSTOMER}` is ready for the SLA engine.
+- Migration `0004`: `customers` (`CUS-00001` codes, segment, region), `ticket_comments` (`ai_assisted`),
+  `ticket_events` (timeline, JSONB metadata), `ticket_attachments`; tickets get `customer_id`, `created_by_id`,
+  `assignee_id`, `team_id`, `resolution`, `reopen_count`, `escalated_at`, `closed_at`. Data: imported rows → CLOSED,
+  app rows mapped to the new states, team filled from the category's owning team. Round-trip (0004 → 0003 → 0004)
+  and `alembic check` clean.
+- Endpoints: `POST /tickets/{id}/assign|escalate|resolve|close|reopen`, `PATCH /tickets/{id}` (start / wait on
+  customer / resume, category correction), `GET|POST /tickets/{id}/comments`, `GET /tickets/{id}/timeline`,
+  `POST|GET /tickets/{id}/attachments[/{aid}]`, `GET /tickets/summary`, `GET /teams/{id}/members` (open load).
+  Detail returns `allowed_actions` (state machine ∩ permissions) so the UI only shows legal buttons.
+- Permissions (spec table): agents see own/team/created tickets (others 404, no number leaks via search), work on
+  own/team tickets, reassign within their team only, may not close someone else's ticket (Admin only, audited).
+- Attachments: allow-listed types, magic-byte check (an .exe renamed to .pdf is rejected), size limit while
+  streaming, random storage key (user filename only displayed), `Content-Disposition: attachment` + `nosniff`.
+- Importer `link_history`: 85,907 historical tickets linked to their dataset agent (Agent_name) and team (idempotent).
+  Historical tickets show a timeline from their real timestamps (received → first response → closed + CSAT).
+- Frontend: action bar + assign (team picker for admins, agents sorted by open load, "least busy"), escalate/reopen
+  reason and resolve dialogs, conversation (comments + attachments), timeline, customer card with previous tickets,
+  queue views (open, unassigned, mine, escalated, needs review, done, all) with assignee/team columns, **My work**
+  page (agents now land there), 8-state badges.
+- Checked by hand on the full dataset (agent: My work, create → assign to self → start → comment; admin: queue and a
+  historical ticket's timeline). Fixed while checking: "customer since 0 seconds" → a date; self-assignment reads
+  "took the ticket"; previous tickets were serialised from raw ORM objects (Pydantic warning).
+- Tests: 157 backend (85 new: all 72 state/action pairs, full API lifecycle, 409s, same-transaction rollback of
+  event + audit, visibility and assignment/close permissions, comments, attachments, customers, filters), 28
+  frontend (8 new lifecycle UI tests), Playwright e2e now walks assign → start → comment + attachment → resolve →
+  close and checks the timeline.

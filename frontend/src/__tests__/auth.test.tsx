@@ -28,7 +28,7 @@ describe("login and session", () => {
       signedInAs(null),
       () => ({ body: [] }),
     );
-    renderRoute(<App />, "/tickets?status=Open");
+    renderRoute(<App />, "/tickets?view=escalated");
     expect(await screen.findByRole("heading", { name: "Complaint Intelligence" })).toBeInTheDocument();
 
     await userEvent.type(screen.getByLabelText("Email"), "arjun@shopzilla.example");
@@ -40,9 +40,9 @@ describe("login and session", () => {
     await userEvent.type(screen.getByLabelText("Password"), "Agent@12345");
     await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
     // Back on the page they asked for, with the access token attached to API calls.
-    expect(await screen.findByRole("heading", { name: "Tickets" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Ticket queue" })).toBeInTheDocument();
     await waitFor(() =>
-      expect(fetchMock.mock.calls.some(([u, i]) => String(u).includes("status=Open") && authHeader(i) === "Bearer token-2")).toBe(true),
+      expect(fetchMock.mock.calls.some(([u, i]) => String(u).includes("status=ESCALATED") && authHeader(i) === "Bearer token-2")).toBe(true),
     );
   });
 
@@ -98,12 +98,19 @@ describe("login and session", () => {
 });
 
 describe("role-aware navigation", () => {
-  it("agents see the ticket workspace but no dashboard or admin links, and land on the queue", async () => {
-    mockFetch((u) => (u.includes("/api/v1/tickets?") ? { body: emptyPage } : undefined), signedInAs(agentUser), () => ({ body: [] }));
+  it("agents see the ticket workspace but no dashboard or admin links, and land on My work", async () => {
+    mockFetch(
+      (u) => (u.includes("/api/v1/tickets/summary") ? { body: { by_status: {}, open: 0 } } : undefined),
+      (u) => (u.includes("/api/v1/tickets?") ? { body: emptyPage } : undefined),
+      signedInAs(agentUser),
+      () => ({ body: [] }),
+    );
     renderRoute(<App />, "/");
-    expect(await screen.findByRole("heading", { name: "Tickets" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "My work" })).toBeInTheDocument();
+    expect(await screen.findByText("Nothing assigned to you")).toBeInTheDocument();
     const nav = screen.getByRole("navigation", { name: "Main" });
     expect(within(nav).getByRole("link", { name: "Ticket queue" })).toBeInTheDocument();
+    expect(within(nav).getByRole("link", { name: "My work" })).toBeInTheDocument();
     expect(within(nav).queryByRole("link", { name: "Dashboard" })).toBeNull();
     expect(within(nav).queryByRole("link", { name: "Users" })).toBeNull();
     expect(screen.getByTestId("user-menu")).toHaveTextContent("Payments Support");
