@@ -20,6 +20,8 @@ numpy==2.5.3
 pandas==3.0.6
 scipy==1.18.1
 transformers==5.18.0
+# MiniLM sentence embeddings (similar tickets, knowledge-base search, RAG)
+sentence-transformers==6.1.0
 openai==3.24.0
 # CPU-only PyTorch for the Hugging Face sentiment model
 --extra-index-url https://download.pytorch.org/whl/cpu

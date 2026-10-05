@@ -60,6 +60,19 @@ class Settings(BaseSettings):
     # Category predictions below this confidence are flagged for human review.
     review_threshold: float = 0.45
 
+    # --- retrieval (embeddings, similar tickets, knowledge base, RAG) ---
+    embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
+    # Vector matches below these cosine similarities are dropped (keyword matches still count). Tickets need a higher
+    # bar (one-line remarks would otherwise look "similar"); correct help articles score from ~0.25 on short queries.
+    similar_min_score: float = 0.35
+    article_min_score: float = 0.20
+    rrf_k: int = 60  # reciprocal rank fusion constant for hybrid (vector + keyword) search
+    # Weight of the keyword ranking in the fusion (vectors weigh 1.0). Tuned on ml/retrieval_examples.py:
+    # see ml/reports/retrieval_report.md.
+    keyword_weight: float = 0.3
+    rag_similar_tickets: int = 3  # past tickets given to the copilot as grounding
+    rag_articles: int = 2  # knowledge-base articles given to the copilot as grounding
+
     # --- routing (deterministic rules, app/domain/routing.py) ---
     # An agent with this many open tickets gets no more automatic assignments; the ticket waits in the team queue.
     routing_max_open_per_agent: int = 25

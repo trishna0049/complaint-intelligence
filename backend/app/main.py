@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.ai.classifier import get_classifier
+from app.ai.embeddings import get_embedder
 from app.ai.llm import LLMError
 from app.ai.sentiment import load_sentiment
 from app.api.v1 import api_router
@@ -24,6 +25,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     # Warm the models so the first complaint isn't slow. The schema is managed by Alembic (not created here).
     get_classifier()
     load_sentiment()
+    get_embedder()
     yield
     await dispose_engine()
     await close_redis()

@@ -73,3 +73,22 @@ unhappy customers are the useful signals for triage.
 ```powershell
 .\scripts\dev.ps1 train
 ```
+
+## Retrieval embeddings (similar tickets, knowledge base, RAG)
+
+- **Model:** `sentence-transformers/all-MiniLM-L6-v2` (pretrained, not fine-tuned), 384 dimensions, L2-normalised,
+  CPU (~1,000 texts/s). Vectors live in pgvector with HNSW cosine indexes; each row records the model name so a
+  model change can never mix vectors.
+- **What is embedded:** tickets with real complaint text — everything typed in the app plus dataset remarks of at
+  least four words (13,779 of 85,907 rows; templated descriptions and one-word survey remarks are skipped) — and every
+  help article (title + body).
+- **Search:** hybrid — vector neighbours + PostgreSQL full text, fused by weighted Reciprocal Rank Fusion (k=60,
+  keyword weight 0.3). Vector matches below 0.35 (tickets) / 0.20 (articles) cosine are dropped.
+- **Evaluation** on fixed examples ([reports/retrieval_report.md](reports/retrieval_report.md)): 30 customer-style
+  knowledge-base queries — hybrid recall@1 0.93, recall@3 1.00, MRR 0.96 (meaning only 0.90 / 0.97 / 0.93, keywords
+  only 0.77 / 0.87 / 0.82); in 8 of 8 ticket triples the paraphrase is closer than a different problem. The fusion
+  weight and thresholds were chosen on these same 30 queries, so the hybrid numbers are optimistic.
+- **Limits:** English-centric (Hinglish and heavy typos degrade matches); the dataset's remarks are post-contact survey
+  comments, so "similar historical tickets" are often feedback about a similar problem rather than full complaints.
+- **Fallback:** when the model can't load (or in unit tests) a deterministic hashing embedder keeps search working
+  on keyword overlap.

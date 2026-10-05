@@ -21,15 +21,16 @@ from typing import Any, Protocol
 
 from pydantic import BaseModel, Field, ValidationError
 
-from app.ai.pii import mask_pii
+from app.ai.pii import CUSTOMER, mask_pii
 from app.core.config import get_settings
 
 log = logging.getLogger(__name__)
 
-PROMPT_VERSION = "copilot-v2"
+PROMPT_VERSION = "copilot-v3"
 
 SYSTEM_PROMPT = """You are a senior customer-support analyst for Shopzilla, an Indian e-commerce company.
-Given one customer complaint, its automated triage and the conversation on the ticket so far, produce:
+Given one customer complaint, its automated triage, the conversation on the ticket so far and reference material
+(help articles [A1].. and similar past tickets [T1]..), produce:
 - summary: 1-2 sentences, neutral, factual.
 - root_cause: the most likely underlying cause in one sentence, phrased as a hypothesis the agent should verify
   ("Likely ..."). If the complaint does not support a cause, say "Unclear from the complaint" and what to check.
@@ -40,7 +41,12 @@ Given one customer complaint, its automated triage and the conversation on the t
 The conversation is the support team's notes and replies so far. Treat what it reports as established facts: never
 recommend a check it says was already done — recommend the step that follows from its result — and let those facts
 shape the root cause and the reply.
-Placeholders like [EMAIL] or [PHONE] are masked personal data; keep them as-is."""
+Ground your answer in the references: follow the policies and timelines in the help articles, and use similar
+past tickets to see what the problem usually turns out to be. Only state policy facts (timelines, amounts, limits) that
+appear in a help article. List in references_used the ids (e.g. "A1", "T2") of the references you actually relied on;
+leave it empty if none was relevant. Never mention reference ids, other tickets or other customers in customer_reply.
+Placeholders like [EMAIL] or [PHONE] are masked personal data; keep them as-is. [CUSTOMER] stands for this
+customer's name: greet them with it in customer_reply."""
 
 
 class ComplaintInsight(BaseModel):
@@ -49,6 +55,7 @@ class ComplaintInsight(BaseModel):
     key_issues: list[str] = Field(min_length=1, max_length=4)
     recommended_actions: list[str] = Field(min_length=1, max_length=5)
     customer_reply: str
+    references_used: list[str] = Field(description='Ids of the references relied on, e.g. ["A1", "T2"]; may be empty')
 
 
 Usage = dict[str, Any]
@@ -89,6 +96,12 @@ def build_user_prompt(masked_text: str, context: dict[str, Any]) -> str:
     if conversation:
         lines.append("Conversation so far (oldest first):")
         lines.extend(f"- {c['author']}: {c['body']}" for c in conversation)
+    references = context.get("references") or []
+    if references:
+        lines.append("References:")
+        for r in references:
+            lines.append(f"[{r['ref']}] {r['heading']}")
+            lines.append(f"    {r['text']}")
     return "\n".join(lines)
 
 
@@ -301,7 +314,7 @@ class MockProvider:
     """Deterministic, offline stand-in that builds realistic output from the triage results."""
 
     name = "mock"
-    model = "mock-copilot-v2"
+    model = "mock-copilot-v3"
 
     def generate(self, complaint_text: str, context: dict[str, Any]) -> tuple[ComplaintInsight, Usage | None]:
         category = context.get("category") or "General"
@@ -330,13 +343,24 @@ class MockProvider:
         conversation = context.get("conversation") or []
         if conversation:
             actions.insert(0, f"Follow up on the latest note from {conversation[-1]['author']} before replying")
+        references = context.get("references") or []
+        articles = [r for r in references if r["type"] == "article"]
+        tickets = [r for r in references if r["type"] == "ticket"]
+        used = []
+        if articles:  # grounded: follow the most relevant help article
+            actions.insert(1 if len(actions) > 1 else 0, f"Follow the help article “{articles[0]['title']}”")
+            used.append(articles[0]["ref"])
+        if tickets:
+            used.append(tickets[0]["ref"])
 
         apology = "I'm sorry for the trouble" + (
             " and that you had to contact us more than once" if entities.get("repeat_contact") else ""
         )
+        greeting = f"Hello {CUSTOMER}," if context.get("customer_known") else "Hello,"
         reply = (
-            f"Hello,\n\n{apology}. I've reviewed your complaint about the {play['issue']} and I'm personally looking "
-            f"into it now. I'll update you with the outcome and next steps shortly.\n\nRegards,\nShopzilla Support"
+            f"{greeting}\n\n{apology}. I've reviewed your complaint about the {play['issue']} and I'm personally "
+            "looking into it now. I'll update you with the outcome and next steps shortly.\n\n"
+            "Regards,\nShopzilla Support"
         )
         insight = ComplaintInsight(
             summary=summary,
@@ -344,6 +368,7 @@ class MockProvider:
             key_issues=issues[:4],
             recommended_actions=actions[:5],
             customer_reply=reply,
+            references_used=used,
         )
         return insight, None
 
@@ -363,15 +388,42 @@ def get_provider() -> InsightProvider:
     return MockProvider()
 
 
-def generate_insight(text: str, context: dict[str, Any], known_names: list[str] | None = None) -> InsightRun:
-    """Mask personal data (complaint and conversation), then ask the configured provider. Errors propagate as
-    LLMError."""
-    provider = get_provider()
-    masked = mask_pii(text, known_names)
-    if context.get("conversation"):
-        context = {
-            **context,
-            "conversation": [{**c, "body": mask_pii(c["body"], known_names)} for c in context["conversation"]],
+def restore_customer(insight: ComplaintInsight, customer_name: str | None) -> ComplaintInsight:
+    """Put the customer's first name back where the model used [CUSTOMER] — locally, after the call, so the name
+    itself never reaches the LLM. Without a known name the greeting falls back to a neutral word."""
+    first = (customer_name or "").strip().split(" ")[0] or "there"
+
+    def fix(text: str) -> str:
+        return text.replace(CUSTOMER, first)
+
+    return insight.model_copy(
+        update={
+            "summary": fix(insight.summary),
+            "root_cause": fix(insight.root_cause),
+            "key_issues": [fix(k) for k in insight.key_issues],
+            "recommended_actions": [fix(a) for a in insight.recommended_actions],
+            "customer_reply": fix(insight.customer_reply),
         }
+    )
+
+
+def generate_insight(
+    text: str, context: dict[str, Any], known_names: list[str] | None = None, customer_name: str | None = None
+) -> InsightRun:
+    """Mask personal data (complaint, conversation and references), ask the configured provider, then restore the
+    customer's name in its answer. Errors propagate as LLMError."""
+    provider = get_provider()
+
+    def mask(value: str) -> str:
+        return mask_pii(value, known_names, customer_name)
+
+    masked = mask(text)
+    context = {**context, "customer_known": bool(customer_name)}
+    if context.get("conversation"):
+        context["conversation"] = [{**c, "body": mask(c["body"])} for c in context["conversation"]]
+    if context.get("references"):  # other customers' tickets: masked like everything else
+        context["references"] = [{**r, "text": mask(r["text"])} for r in context["references"]]
     insight, usage = provider.generate(masked, context)
-    return InsightRun(insight=insight, provider=provider.name, model=provider.model, usage=usage)
+    return InsightRun(
+        insight=restore_customer(insight, customer_name), provider=provider.name, model=provider.model, usage=usage
+    )

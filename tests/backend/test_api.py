@@ -117,7 +117,7 @@ async def test_copilot_draft_response_with_mock_llm(client):
     res = await client.post("/api/v1/ai/draft-response", json={"ticket_id": tid})
     assert res.status_code == 201
     a = res.json()
-    assert a["kind"] == "copilot" and a["provider"] == "mock" and a["prompt_version"] == "copilot-v2"
+    assert a["kind"] == "copilot" and a["provider"] == "mock" and a["prompt_version"] == "copilot-v3"
     assert a["summary"] and a["root_cause"] and a["key_issues"] and a["recommendations"] and a["draft_response"]
     assert a["root_cause"].startswith("Likely") and a["draft_status"] == "pending"
     assert a["category"] == "Payments related" and a["model_version"].startswith("test-tiny")

@@ -47,14 +47,20 @@ test("ticket is triaged, summarised, tracked on the dashboard and resolved", asy
   await expect(timeline).toContainText("in Payments Support");
   await expect(page.getByText(/Least busy of \d+ available agents in Payments Support/).first()).toBeVisible();
 
-  // 4. AI copilot (mock provider): summary, key issues, recommended actions, draft reply.
+  // 3c. Retrieval: the seeded knowledge base (MiniLM + full text) offers the duplicate-payment article.
+  const help = page.getByRole("list", { name: "Help articles" });
+  await expect(help.getByRole("link").first()).toContainText("Duplicate or double payment for one order");
+
+  // 4. AI copilot (mock provider): summary, key issues, recommended actions, draft reply — grounded in the KB.
   await page.getByRole("button", { name: "Run copilot" }).click();
   await expect(page.getByRole("heading", { name: "Recommended actions" })).toBeVisible();
   await expect(page.getByText(/^Customer reports a payment problem/)).toBeVisible();
-  await expect(page.getByText(/Mock LLM · mock-copilot-v2 · copilot-v2/)).toBeVisible();
+  await expect(page.getByText(/Mock LLM · mock-copilot-v3 · copilot-v3/)).toBeVisible();
   await expect(page.getByText("Amount involved: ₹12,500")).toBeVisible();
   await expect(page.getByText(/^Likely a duplicate capture at the payment gateway/)).toBeVisible();
   await expect(page.getByRole("button", { name: "Regenerate" })).toBeVisible();
+  const sources = page.getByRole("region", { name: "Sources" });
+  await expect(sources.getByTitle("Used by the copilot").first()).toContainText("Duplicate or double payment for one order");
 
   // 4b. Human in the loop: nothing is posted until the agent accepts; here they edit the draft first.
   await expect(page.getByText("No comments yet")).toBeVisible();
@@ -74,6 +80,11 @@ test("ticket is triaged, summarised, tracked on the dashboard and resolved", asy
   await expect(row).toContainText("Critical");
   await expect(row).toContainText("Assigned");
   await expect(row).toContainText("Payments Support");
+
+  // 5b. Knowledge base: search by meaning.
+  await nav("Knowledge base").click();
+  await page.getByLabel("Search the knowledge base").fill("when will my refund reach my card");
+  await expect(page.getByRole("list", { name: "Search results" }).getByRole("link").first()).toContainText("Refund");
 
   // 6. Dashboard: it appears among the open high-priority tickets.
   await nav("Dashboard").click();

@@ -15,7 +15,8 @@ Satisfaction* dataset (85,907 support records from an Indian e-commerce company)
 | Entities | Rules: ₹ amounts (₹/Rs/INR/lakh), order IDs, dates, products, repeat-contact cues |
 | Priority (Low → Critical) | Transparent raise-only business rules ([docs/PRIORITY_RULES.md](docs/PRIORITY_RULES.md)) — never the LLM |
 | Routing (team + agent) | Deterministic rules: category → owning team → least-busy agent; low confidence → review queue ([docs/ROUTING_RULES.md](docs/ROUTING_RULES.md)) |
-| Copilot: summary, likely root cause, key issues, next steps, draft reply | OpenAI API with structured outputs (prompt `copilot-v2`, uses the ticket's conversation as context); offline **mock** provider when no key is set; PII masked first; the draft is only posted when an agent accepts it |
+| Similar tickets & knowledge base | MiniLM (`all-MiniLM-L6-v2`, 384 dims) on pgvector HNSW **+** PostgreSQL full text, fused by weighted Reciprocal Rank Fusion; 26 seeded help articles; evaluated on fixed examples ([ml/reports/retrieval_report.md](ml/reports/retrieval_report.md)) |
+| Copilot: summary, likely root cause, key issues, next steps, draft reply | OpenAI API with structured outputs (prompt `copilot-v3`), **grounded (RAG)** in the most relevant help articles and similar past tickets plus the ticket's conversation, citing what it used; offline **mock** provider when no key is set; PII masked first (the customer's name is restored locally in the reply); the draft is only posted when an agent accepts it |
 | Dashboard | KPIs, daily volume & sentiment trends, category / intent / channel breakdowns, week-over-week emerging issues, open high-priority list, auto-generated insights |
 
 ---
@@ -28,9 +29,10 @@ Prerequisites: Python 3.12, Node 20+, Docker Desktop, and the dataset CSV saved 
 .\scripts\dev.ps1 setup     # .env, Python venv, pip + npm install
 .\scripts\dev.ps1 up        # PostgreSQL 16 + pgvector (localhost:15432) and Redis (localhost:16379) in Docker
 .\scripts\dev.ps1 migrate   # create the database and apply the Alembic migrations
-.\scripts\dev.ps1 seed      # departments, teams, categories, the admin and the 1,371 dataset agents (~1 min)
+.\scripts\dev.ps1 seed      # departments, teams, categories, admin, 1,371 dataset agents, knowledge base (~1 min)
 .\scripts\dev.ps1 train     # data profile, train classifiers, validate the sentiment model (~45 min on CPU)
 .\scripts\dev.ps1 import    # load the 85,907 historical complaints into Postgres (~75 s, idempotent)
+.\scripts\dev.ps1 embed     # MiniLM embeddings of the 13,779 informative tickets (~2 min, idempotent)
 .\scripts\dev.ps1 start     # API on http://localhost:18000, app on http://localhost:15173
 ```
 
@@ -86,7 +88,11 @@ and are renewed automatically from an HttpOnly refresh cookie; reusing an old re
 6. **Routing** — every new ticket is routed by rules (never the LLM): category → owning team → least-busy active
    agent (ties round-robin), or the team queue when nobody is free. Low-confidence categories wait in the Admin
    **Review queue**; confirming or correcting the category routes them. See [docs/ROUTING_RULES.md](docs/ROUTING_RULES.md).
-7. **My work** — the agent's start page: open tickets by state, highest priority first, and the team's unassigned
+7. **Similar tickets & knowledge base** — the ticket page lists similar past tickets (within what the user may
+   see) and the most relevant help articles; the **Knowledge base** page searches by meaning and keywords. Admins
+   create and edit articles (re-indexed on save); agents read them. The copilot is grounded in the same results and
+   shows which ones it relied on ("Grounded in").
+8. **My work** — the agent's start page: open tickets by state, highest priority first, and the team's unassigned
    backlog.
 
 Permissions follow the spec: agents work on own/team tickets and may reassign within their team; reassigning to
@@ -134,6 +140,9 @@ needs `Authorization: Bearer <access token>`; Admin-only routes return 403 for a
 | POST | `/tickets/{id}/auto-assign` | Admin: re-run the routing rules on an unassigned ticket |
 | GET / POST | `/tickets/{id}/comments` · `/tickets/{id}/timeline` | Comments (first one sets `first_response_at`) · event timeline |
 | POST / GET | `/tickets/{id}/attachments` · `/attachments/{aid}` | Upload (allow-listed types, content sniffed, 10 MB) · download |
+| GET | `/tickets/{id}/similar` | Similar tickets (hybrid search, scoped to the caller) |
+| GET | `/knowledge/search?q=` or `?ticket_id=` | Knowledge-base search (hybrid) |
+| CRUD | `/knowledge` | Help articles: read for everyone, create / edit / delete for Admins (audited) |
 | GET | `/teams/{id}/members` | Active members with their open-ticket load (agents: own team) |
 | POST | `/ai/draft-response` | Copilot for `{ticket_id}`: summary, root cause, key issues, next steps, draft reply (re-running supersedes the pending draft) |
 | POST | `/ai/drafts/{id}/accept` · `/ai/drafts/{id}/discard` | Agent review of a draft: accept `{response}` (as is or edited → AI-assisted comment) or discard `{reason?}` |
@@ -150,13 +159,15 @@ Interactive docs: http://localhost:18000/docs
 ```
 backend/app/        FastAPI app — api/v1/ (routes), domain/ (ticket state machine), services/ (business rules),
                     repositories/ (SQL), models/, schemas/, auth/, core/, ai/ (triage, classifier, sentiment,
-                    entities, priority, pii, llm)
-backend/scripts/    prepare_db.py (create + migrate), seed.py (org + users), import_dataset.py
+                    entities, priority, pii, llm, embeddings)
+backend/scripts/    prepare_db.py (create + migrate), seed.py (org + users + KB), seed_knowledge.py, import_dataset.py,
+                    embed_tickets.py (embedding backfill)
 backend/migrations/ Alembic migrations
-ml/                 profile_dataset.py, train_classifiers.py, eval_sentiment.py, reports/, MODEL_CARD.md
-frontend/src/       pages/ (Dashboard, MyWork, Tickets, ReviewQueue, NewTicket, TicketDetail, Login, admin/), components/ (ticket/:
-                    ActionBar, Conversation, Timeline), api/, auth/
-tests/backend/      pytest (AI components, API, auth/permissions, lifecycle, routing, dashboard)
+ml/                 profile_dataset.py, train_classifiers.py, eval_sentiment.py, eval_retrieval.py +
+                    retrieval_examples.py (fixed examples), reports/, MODEL_CARD.md
+frontend/src/       pages/ (Dashboard, MyWork, Tickets, ReviewQueue, NewTicket, TicketDetail, Knowledge, Login, admin/), components/ (ticket/:
+                    ActionBar, Conversation, Timeline, CopilotPanel, Retrieval), api/, auth/
+tests/backend/      pytest (AI components, API, auth/permissions, lifecycle, routing, copilot, retrieval, dashboard)
 tests/e2e/          Playwright end-to-end test of the full complaint flow
 docs/               DATA_PROFILE.md, ARCHITECTURE.md, PRIORITY_RULES.md, ROUTING_RULES.md
 scripts/dev.ps1     all developer commands

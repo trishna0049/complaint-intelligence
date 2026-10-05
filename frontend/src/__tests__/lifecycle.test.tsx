@@ -19,7 +19,7 @@ const bodyOf = (init?: RequestInit) => JSON.parse(String(init?.body ?? "{}"));
 
 describe("ticket actions", () => {
   it("shows only the actions the API allows, primary first", async () => {
-    mockFetch((u) => (u.includes("/api/v1/tickets/1") ? { body: inProgress } : undefined), signedInAs(agentUser), () => ({ body: [] }));
+    mockFetch((u) => (u.split("?")[0].endsWith("/api/v1/tickets/1") ? { body: inProgress } : undefined), signedInAs(agentUser), () => ({ body: [] }));
     renderRoute(<App />, "/tickets/1");
     const bar = await screen.findByRole("toolbar", { name: "Ticket actions" });
     const labels = within(bar).getAllByRole("button").map((b) => b.textContent);
@@ -28,7 +28,7 @@ describe("ticket actions", () => {
   });
 
   it("a ticket with no permitted actions says so instead of showing buttons", async () => {
-    mockFetch((u) => (u.includes("/api/v1/tickets/1") ? { body: { ...ticket, allowed_actions: [] } } : undefined), signedInAs(agentUser), () => ({ body: [] }));
+    mockFetch((u) => (u.split("?")[0].endsWith("/api/v1/tickets/1") ? { body: { ...ticket, allowed_actions: [] } } : undefined), signedInAs(agentUser), () => ({ body: [] }));
     renderRoute(<App />, "/tickets/1");
     expect(await screen.findByText("No actions available to you on this ticket.")).toBeInTheDocument();
   });
@@ -41,7 +41,7 @@ describe("ticket actions", () => {
         current = { ...inProgress, status: "WAITING_CUSTOMER", allowed_actions: ["assign", "resume", "escalate", "resolve"] };
         return { body: current };
       },
-      (u) => (u.includes("/api/v1/tickets/1") ? { body: current } : undefined),
+      (u) => (u.split("?")[0].endsWith("/api/v1/tickets/1") ? { body: current } : undefined),
       signedInAs(agentUser),
       () => ({ body: [] }),
     );
@@ -58,7 +58,7 @@ describe("ticket actions", () => {
       (u, i) => (u.endsWith("/tickets/1/resolve") && i?.method === "POST"
         ? { body: { ...inProgress, status: "RESOLVED", resolution: bodyOf(i).resolution, resolved_at: now, allowed_actions: ["close", "reopen"] } }
         : undefined),
-      (u) => (u.includes("/api/v1/tickets/1") ? { body: inProgress } : undefined),
+      (u) => (u.split("?")[0].endsWith("/api/v1/tickets/1") ? { body: inProgress } : undefined),
       signedInAs(agentUser),
       () => ({ body: [] }),
     );
@@ -83,7 +83,7 @@ describe("ticket actions", () => {
       (u, i) => (u.endsWith("/tickets/1/escalate") && i?.method === "POST"
         ? { status: 409, body: { detail: { code: "invalid_transition", message: "Can't escalate a ticket that is RESOLVED (allowed from: ASSIGNED)." } } }
         : undefined),
-      (u) => (u.includes("/api/v1/tickets/1") ? { body: inProgress } : undefined),
+      (u) => (u.split("?")[0].endsWith("/api/v1/tickets/1") ? { body: inProgress } : undefined),
       signedInAs(agentUser),
       () => ({ body: [] }),
     );
@@ -106,7 +106,7 @@ describe("ticket actions", () => {
       (u, i) => (u.endsWith("/tickets/1/assign") && i?.method === "POST"
         ? { body: { ...ticket, status: "ASSIGNED", assignee: { id: 8, name: "Quiet Quinn" }, allowed_actions: ["assign", "start", "escalate", "resolve"] } }
         : undefined),
-      (u) => (u.includes("/api/v1/tickets/1") ? { body: ticket } : undefined),
+      (u) => (u.split("?")[0].endsWith("/api/v1/tickets/1") ? { body: ticket } : undefined),
       signedInAs(adminUser),
       () => ({ body: [] }),
     );
@@ -137,7 +137,7 @@ describe("conversation and timeline", () => {
         comments = [{ id: 1, body: bodyOf(i).body, ai_assisted: false, author: { id: 2, name: "Arjun Agent" }, created_at: now }];
         return { status: 201, body: comments[0] };
       },
-      (u) => (u.includes("/api/v1/tickets/1") ? { body: { ...inProgress, comments } } : undefined),
+      (u) => (u.split("?")[0].endsWith("/api/v1/tickets/1") ? { body: { ...inProgress, comments } } : undefined),
       signedInAs(agentUser),
       () => ({ body: [] }),
     );
@@ -163,7 +163,7 @@ describe("conversation and timeline", () => {
         { id: 6, event_type: "assigned", actor: { id: 2, name: "Arjun Agent" }, metadata: { assignee: "Arjun Agent", assignee_id: 2 }, created_at: now },
       ],
     };
-    mockFetch((u) => (u.includes("/api/v1/tickets/1") ? { body: withHistory } : undefined), signedInAs(agentUser), () => ({ body: [] }));
+    mockFetch((u) => (u.split("?")[0].endsWith("/api/v1/tickets/1") ? { body: withHistory } : undefined), signedInAs(agentUser), () => ({ body: [] }));
     renderRoute(<App />, "/tickets/1");
     const timeline = await screen.findByRole("list", { name: "Ticket timeline" });
     expect(timeline).toHaveTextContent("Ada Admin created the ticket via Email");

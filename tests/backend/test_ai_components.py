@@ -92,6 +92,12 @@ def test_pii_is_masked():
 
 def test_known_customer_name_is_masked():
     assert mask_pii("Priya Sharma here, refund please", known_names=["Priya Sharma"]) == "[NAME] here, refund please"
+    # A known name's parts are masked on their own too, as whole words only.
+    assert (
+        mask_pii("Thanks, Meera. Iyer family order", known_names=["Meera Iyer"])
+        == "Thanks, [NAME]. [NAME] family order"
+    )
+    assert mask_pii("Ravindra called", known_names=["Ravi Kumar"]) == "Ravindra called"
 
 
 # ---------------------------------------------------------------- LLM (mock) + keyword prior

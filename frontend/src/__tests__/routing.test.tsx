@@ -75,7 +75,7 @@ describe("review queue", () => {
 
 describe("routing on the ticket page", () => {
   it("timeline and assignment card explain the routing decision", async () => {
-    mockFetch((u) => (u.includes("/api/v1/tickets/1") ? { body: routedTo({}) } : undefined), signedInAs(agentUser), () => ({ body: [] }));
+    mockFetch((u) => (u.split("?")[0].endsWith("/api/v1/tickets/1") ? { body: routedTo({}) } : undefined), signedInAs(agentUser), () => ({ body: [] }));
     renderRoute(<App />, "/tickets/1");
     const timeline = await screen.findByRole("list", { name: "Ticket timeline" });
     expect(timeline).toHaveTextContent("Routing rules: assigned to Arjun Agent in Payments Support");
@@ -95,7 +95,7 @@ describe("routing on the ticket page", () => {
           metadata: { outcome: "team_queue", trigger: "manual", team: "Payments Support", reason: "All busy." } },
       ],
     });
-    mockFetch((u) => (u.includes("/api/v1/tickets/1") ? { body: confirmed } : undefined), signedInAs(adminUser), () => ({ body: [] }));
+    mockFetch((u) => (u.split("?")[0].endsWith("/api/v1/tickets/1") ? { body: confirmed } : undefined), signedInAs(adminUser), () => ({ body: [] }));
     renderRoute(<App />, "/tickets/1");
     const timeline = await screen.findByRole("list", { name: "Ticket timeline" });
     expect(timeline).toHaveTextContent("Ada Admin confirmed the AI category Payments related");
@@ -108,7 +108,7 @@ describe("routing on the ticket page", () => {
   it("a low-confidence ticket offers confirm and the top alternatives", async () => {
     const fetchMock = mockFetch(
       (u, i) => (u.endsWith("/api/v1/tickets/1") && i?.method === "PATCH" ? { body: routedTo({ category: "Refund Related" }) } : undefined),
-      (u) => (u.includes("/api/v1/tickets/1") ? { body: lowConfidence } : undefined),
+      (u) => (u.split("?")[0].endsWith("/api/v1/tickets/1") ? { body: lowConfidence } : undefined),
       signedInAs(adminUser),
       () => ({ body: [] }),
     );
@@ -124,7 +124,7 @@ describe("routing on the ticket page", () => {
     const queued: TicketDetail = { ...ticket, allowed_actions: ["auto_assign", "assign", "escalate"] };
     const fetchMock = mockFetch(
       (u, i) => (u.endsWith("/tickets/1/auto-assign") && i?.method === "POST" ? { body: routedTo({}) } : undefined),
-      (u) => (u.includes("/api/v1/tickets/1") ? { body: queued } : undefined),
+      (u) => (u.split("?")[0].endsWith("/api/v1/tickets/1") ? { body: queued } : undefined),
       signedInAs(adminUser),
       () => ({ body: [] }),
     );
@@ -140,7 +140,7 @@ describe("routing on the ticket page", () => {
       (u, i) => (u.endsWith("/api/v1/tickets/1") && i?.method === "PATCH"
         ? { body: routedTo({ category: "Returns", team: { id: 4, name: "Returns & Pickups" }, assignee: { id: 5, name: "Olga Other" }, can_view: false, allowed_actions: [] }) }
         : undefined),
-      (u) => (u.includes("/api/v1/tickets/1") ? { body: mine } : undefined),
+      (u) => (u.split("?")[0].endsWith("/api/v1/tickets/1") ? { body: mine } : undefined),
       (u) => (u.includes("/api/v1/categories") ? { body: [{ name: "Payments related" }, { name: "Returns" }] } : undefined),
       signedInAs(agentUser),
       () => ({ body: [] }),

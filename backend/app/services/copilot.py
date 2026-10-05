@@ -6,6 +6,8 @@ Responsible-AI rules from the spec, enforced here:
   the agent's final text as a comment marked `ai_assisted` — the agent is its author.
 * Personal data is masked before any text goes to the LLM (complaint and conversation, see app.ai.llm).
 * Every output stores its provider, model, prompt version and the triage confidence / model version it built on.
+* RAG: the copilot is grounded in the most relevant help articles and similar past tickets (hybrid search, within
+  what the caller may see); the run stores which references it was given and which it cited.
 
 Review states of a copilot run: pending -> accepted | discarded, or superseded when a newer run replaces it.
 """
@@ -15,15 +17,20 @@ from __future__ import annotations
 import asyncio
 import difflib
 from datetime import UTC, datetime
+from typing import Any
 
 from fastapi import HTTPException, status
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.llm import PROMPT_VERSION, generate_insight
+from app.core.config import get_settings
 from app.models import AIAnalysis, Ticket, User
+from app.repositories import retrieval as retrieval_repo
 from app.repositories import tickets as repo
+from app.services import retrieval
 from app.services import tickets as tickets_svc
+from app.services.knowledge import snippet
 
 PENDING, ACCEPTED, DISCARDED, SUPERSEDED = "pending", "accepted", "discarded", "superseded"
 CONVERSATION_TURNS = 6  # most recent comments given to the model as context
@@ -36,6 +43,50 @@ def _now() -> datetime:
 
 def _conflict(message: str) -> HTTPException:
     return HTTPException(status.HTTP_409_CONFLICT, detail={"code": "draft_not_pending", "message": message})
+
+
+ARTICLE_CHARS = 1_200  # of each help article given to the model
+TICKET_CHARS = 600  # of each similar ticket
+
+
+async def grounding(db: AsyncSession, user: User, t: Ticket) -> tuple[list[dict[str, Any]], list[str]]:
+    """References for the prompt ([A1].. articles, [T1].. similar tickets) and the customer names to mask in them."""
+    s = get_settings()
+    refs: list[dict[str, Any]] = []
+    for i, h in enumerate(await retrieval.articles_for_ticket(db, t, limit=s.rag_articles), start=1):
+        a = h.article
+        refs.append(
+            {
+                "ref": f"A{i}",
+                "type": "article",
+                "id": a.id,
+                "title": a.title,
+                "heading": f"Help article: {a.title}" + (f" ({a.category})" if a.category else " (general)"),
+                "text": snippet(a.body, ARTICLE_CHARS),
+                "similarity": h.hit.similarity,
+            }
+        )
+    names: list[str] = []
+    for i, st in enumerate(await retrieval.similar_tickets(db, user, t, limit=s.rag_similar_tickets), start=1):
+        p = st.ticket
+        outcome = f"resolved: {p.resolution}" if p.resolution else p.status.lower().replace("_", " ")
+        if p.csat_score:
+            outcome += f", CSAT {p.csat_score}/5"
+        refs.append(
+            {
+                "ref": f"T{i}",
+                "type": "ticket",
+                "id": p.id,
+                "ticket_number": p.ticket_number,
+                "title": p.subject,
+                "heading": f"Similar past ticket {p.ticket_number} ({p.category} / {p.intent}; {outcome})",
+                "text": snippet(p.description, TICKET_CHARS),
+                "similarity": st.hit.similarity,
+            }
+        )
+        if p.customer_name:
+            names.append(p.customer_name)
+    return refs, names
 
 
 def _normalise(text: str | None) -> str:
@@ -64,10 +115,12 @@ async def generate(db: AsyncSession, user: User, ticket_id: int) -> AIAnalysis:
         "entities": t.entities,
         "conversation": conversation,
     }
-    names = sorted({n for n in [t.customer_name, *(c.author.name for c in comments if c.author)] if n})
+    references, other_customers = await grounding(db, user, t)
+    context["references"] = references
+    names = sorted({n for n in [*(c.author.name for c in comments if c.author), *other_customers] if n})
     # End the read transaction before the (possibly slow) LLM call so no connection sits idle in a transaction.
     await db.commit()
-    run = await asyncio.to_thread(generate_insight, t.description, context, names or None)
+    run = await asyncio.to_thread(generate_insight, t.description, context, names or None, t.customer_name)
 
     superseded = await db.execute(
         update(AIAnalysis)
@@ -86,6 +139,16 @@ async def generate(db: AsyncSession, user: User, ticket_id: int) -> AIAnalysis:
     analysis.model = (run.usage or {}).get("model") or run.model
     analysis.prompt_version = PROMPT_VERSION
     analysis.usage = run.usage
+    cited = set(run.insight.references_used)
+    analysis.grounding = [
+        {k: r[k] for k in ("ref", "type", "id", "title", "similarity") if k in r}
+        | ({"ticket_number": r["ticket_number"]} if "ticket_number" in r else {})
+        | {"cited": r["ref"] in cited}
+        for r in references
+    ]
+    await retrieval_repo.count_article_use(
+        db, [r["id"] for r in references if r["type"] == "article" and r["ref"] in cited]
+    )
     await repo.add_analysis(db, analysis)
     t = await tickets_svc.get_ticket(db, user, ticket_id)
     tickets_svc.record_event(
@@ -99,6 +162,8 @@ async def generate(db: AsyncSession, user: User, ticket_id: int) -> AIAnalysis:
         prompt_version=PROMPT_VERSION,
         regenerated=(superseded.rowcount or 0) > 0,
         context_comments=len(conversation),
+        references=len(references),
+        cited=sorted(cited & {r["ref"] for r in references}),
     )
     await db.commit()
     await db.refresh(analysis, ["reviewed_by"])

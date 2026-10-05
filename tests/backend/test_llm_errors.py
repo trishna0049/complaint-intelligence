@@ -22,6 +22,7 @@ GOOD_INSIGHT = {
     "key_issues": ["Duplicate charge"],
     "recommended_actions": ["Verify the duplicate debit", "Refund the extra charge"],
     "customer_reply": "Hello, we are looking into the duplicate charge.",
+    "references_used": ["A1"],
 }
 
 
@@ -156,7 +157,7 @@ async def test_success_stores_usage_and_cost_and_masks_pii(client, use_openai):
     body = res.json()
     assert body["provider"] == "openai" and body["model"] == "gpt-4o-mini-2024-07-18"
     assert body["summary"] == GOOD_INSIGHT["summary"] and body["root_cause"] == GOOD_INSIGHT["root_cause"]
-    assert body["prompt_version"] == "copilot-v2" and body["draft_status"] == "pending"
+    assert body["prompt_version"] == "copilot-v3" and body["draft_status"] == "pending"
     u = body["usage"]
     assert (u["prompt_tokens"], u["completion_tokens"], u["total_tokens"]) == (300, 150, 450)
     assert u["estimated_cost_usd"] == pytest.approx((300 * 0.15 + 150 * 0.60) / 1e6)

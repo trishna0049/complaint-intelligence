@@ -38,9 +38,9 @@ const copilot: Analysis = {
   id: 5, kind: "copilot", category: "Payments related", intent: "Online Payment Issues", sentiment: "Very Negative", priority: "Critical",
   confidence: 0.82, summary: "Customer reports a payment problem.", key_issues: ["Payment problem", "Amount involved: ₹12,500"],
   recommendations: ["Check the payment gateway logs"], draft_response: "Hello, I'm sorry…", provider: "mock",
-  model: "mock-copilot-v2", model_version: "triage-v1", prompt_version: "copilot-v2", usage: null, created_at: new Date().toISOString(),
+  model: "mock-copilot-v3", model_version: "triage-v1", prompt_version: "copilot-v3", usage: null, created_at: new Date().toISOString(),
   root_cause: "Likely a duplicate capture at the payment gateway.", draft_status: "pending", reviewed_by: null, reviewed_at: null,
-  final_response: null, edited: null, comment_id: null, discard_reason: null,
+  final_response: null, edited: null, comment_id: null, discard_reason: null, grounding: null,
 };
 
 describe("components", () => {
@@ -89,7 +89,7 @@ describe("pages", () => {
 
   it("old /complaints links redirect to tickets", async () => {
     mockFetch(
-      (u) => (u.includes("/api/v1/tickets/1") ? { body: ticket } : undefined),
+      (u) => (u.split("?")[0].endsWith("/api/v1/tickets/1") ? { body: ticket } : undefined),
       signedInAs(adminUser),
       () => ({ body: [] }),
     );
@@ -104,7 +104,7 @@ describe("pages", () => {
         intent: "Online Payment Issues", intent_confidence: 0.4, sentiment: "Very Negative", sentiment_score: 1.3, priority: "Critical",
         priority_reasons: ticket.priority_reasons, entities: ticket.entities, needs_review: false, model_version: "triage-v1" } } : undefined),
       (u, i) => (u.endsWith("/api/v1/tickets") && i?.method === "POST" ? { status: 201, body: ticket } : undefined),
-      (u) => (u.includes("/api/v1/tickets/1") ? { body: ticket } : undefined),
+      (u) => (u.split("?")[0].endsWith("/api/v1/tickets/1") ? { body: ticket } : undefined),
       signedInAs(adminUser),
       () => ({ body: [] }),
     );
@@ -127,7 +127,7 @@ describe("pages", () => {
     let withCopilot = false;
     const fetchMock = mockFetch(
       (u, i) => (u.endsWith("/api/v1/ai/draft-response") && i?.method === "POST" ? ((withCopilot = true), { status: 201, body: copilot }) : undefined),
-      (u) => (u.includes("/api/v1/tickets/1") ? { body: { ...ticket, copilot: withCopilot ? copilot : null } } : undefined),
+      (u) => (u.split("?")[0].endsWith("/api/v1/tickets/1") ? { body: { ...ticket, copilot: withCopilot ? copilot : null } } : undefined),
       signedInAs(adminUser),
       () => ({ body: [] }),
     );
@@ -157,7 +157,7 @@ describe("copilot errors are shown clearly, not crashes", () => {
         if (!(u.endsWith("/ai/draft-response") && i?.method === "POST")) return undefined;
         return { status, body: { detail: { code, message } }, headers: retry ? { "Retry-After": retry } : undefined };
       },
-      (u) => (u.includes("/api/v1/tickets/1") ? { body: ticket } : undefined),
+      (u) => (u.split("?")[0].endsWith("/api/v1/tickets/1") ? { body: ticket } : undefined),
       signedInAs(adminUser),
       () => ({ body: [] }),
     );
@@ -175,7 +175,7 @@ describe("copilot errors are shown clearly, not crashes", () => {
   it("backend down → clear network message", async () => {
     mockFetch(
       (u, i) => (u.endsWith("/ai/draft-response") && i?.method === "POST" ? { throws: true } : undefined),
-      (u) => (u.includes("/api/v1/tickets/1") ? { body: ticket } : undefined),
+      (u) => (u.split("?")[0].endsWith("/api/v1/tickets/1") ? { body: ticket } : undefined),
       signedInAs(adminUser),
       () => ({ body: [] }),
     );

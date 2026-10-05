@@ -44,13 +44,13 @@ async def test_generate_stores_root_cause_versions_and_a_pending_draft(client, o
     t = await ticket(client)
     a = await run(client, t["id"])
     assert a["root_cause"].startswith("Likely a duplicate capture")
-    assert a["prompt_version"] == llm.PROMPT_VERSION == "copilot-v2" and a["model"] == "mock-copilot-v2"
+    assert a["prompt_version"] == llm.PROMPT_VERSION == "copilot-v3" and a["model"] == "mock-copilot-v3"
     assert a["model_version"] == t["model_version"] and a["confidence"] == t["category_confidence"]
     assert a["draft_status"] == "pending" and a["reviewed_by"] is None and a["final_response"] is None
     detail = (await client.get(f"/api/v1/tickets/{t['id']}")).json()
     assert detail["copilot"]["id"] == a["id"]
     (meta,) = events(detail, "copilot_generated")
-    assert meta["regenerated"] is False and meta["prompt_version"] == "copilot-v2"
+    assert meta["regenerated"] is False and meta["prompt_version"] == "copilot-v3"
     # Responsible AI: generating a draft never posts anything.
     assert await comment_count() == 0 and detail["first_response_at"] is None
 
@@ -175,3 +175,38 @@ def test_prompt_includes_the_conversation():
 def test_mock_gives_every_category_a_root_cause(category):
     out, _ = llm.MockProvider().generate("text", {"category": category})
     assert out.root_cause and (out.root_cause.startswith("Likely") or out.root_cause.startswith("Unclear"))
+
+
+async def test_the_reply_greets_the_customer_whose_name_never_reaches_the_model(client, org, monkeypatch):
+    seen: dict[str, Any] = {}
+    real = llm.MockProvider.generate
+
+    def spy(self, text: str, context: dict[str, Any]):  # type: ignore[no-untyped-def]
+        seen.update(text=text, context=context)
+        return real(self, text, context)
+
+    monkeypatch.setattr(llm.MockProvider, "generate", spy)
+    t = await ticket(client)  # customer Ravi Kumar
+    await client.post(f"/api/v1/tickets/{t['id']}/comments", json={"body": "Called Ravi, no answer."})
+    a = await run(client, t["id"])
+    assert a["draft_response"].startswith("Hello Ravi,")
+    sent = seen["text"] + str(seen["context"])
+    assert "Ravi" not in sent and "Kumar" not in sent and "[CUSTOMER]" in str(seen["context"]["conversation"])
+
+
+def test_mask_distinguishes_the_customer_from_other_names():
+    from app.ai.pii import mask_pii
+
+    out = mask_pii("Ravi Kumar spoke to Meera; Ravi is upset", ["Meera Iyer"], customer_name="Ravi Kumar")
+    assert out == "[CUSTOMER] spoke to [NAME]; [CUSTOMER] is upset"
+    insight = llm.ComplaintInsight(
+        summary="[CUSTOMER] was charged twice",
+        root_cause="Likely duplicate",
+        key_issues=["x"],
+        recommended_actions=["Call [CUSTOMER]"],
+        customer_reply="Dear [CUSTOMER],",
+        references_used=[],
+    )
+    restored = llm.restore_customer(insight, "Ravi Kumar")
+    assert restored.customer_reply == "Dear Ravi," and restored.recommended_actions == ["Call Ravi"]
+    assert llm.restore_customer(insight, None).customer_reply == "Dear there,"

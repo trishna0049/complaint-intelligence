@@ -29,6 +29,7 @@ from app.auth.security import hash_password
 from app.core.config import REPO_DIR, get_settings
 from app.core.db import SessionLocal, dispose_engine
 from app.models import Category, Department, Team, User
+from scripts.seed_knowledge import seed_knowledge
 
 EMAIL_DOMAIN = "shopzilla.example"
 
@@ -156,6 +157,7 @@ async def seed(csv_path: Path, agents_per_team: int | None = None) -> dict[str, 
                 .order_by(Team.name, User.name)
             )
         ).all()
+        kb = await seed_knowledge(db)
     await dispose_engine()
     first_agent: dict[str, str] = {}
     for team, email in summary_rows:
@@ -165,6 +167,7 @@ async def seed(csv_path: Path, agents_per_team: int | None = None) -> dict[str, 
         f"{'1 admin' if created_admin else 'admin already present'}, {len(new_agents):,} new agents "
         f"in {time.perf_counter() - started:.1f}s"
     )
+    print(f"  knowledge base: {kb['created']} new articles, {kb['embedded']} embedded")
     print(f"  admin: {s.seed_admin_email} / {s.seed_admin_password}")
     if "Payments Support" in first_agent:
         print(f"  agent (Payments Support): {first_agent['Payments Support']} / {s.seed_agent_password}")

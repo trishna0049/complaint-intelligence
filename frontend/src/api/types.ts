@@ -87,6 +87,8 @@ export interface Analysis {
   prompt_version: string | null;
   usage: Usage | null;
   /** Human review of the draft: nothing reaches the customer unless an agent accepts it. */
+  /** RAG references given to the copilot and whether it cited each. */
+  grounding: GroundingRef[] | null;
   draft_status: DraftStatus | null;
   reviewed_by: UserRef | null;
   reviewed_at: string | null;
@@ -98,6 +100,69 @@ export interface Analysis {
 }
 
 export type DraftStatus = "pending" | "accepted" | "discarded" | "superseded";
+
+/** A reference given to the copilot (RAG): a help article A1.. or a similar past ticket T1.. */
+export interface GroundingRef {
+  ref: string;
+  type: "article" | "ticket";
+  id: number;
+  title: string;
+  ticket_number?: string;
+  similarity: number | null;
+  cited: boolean;
+}
+
+export type MatchedBy = "meaning" | "keywords" | "both";
+
+export interface SimilarTicket {
+  id: number;
+  ticket_number: string;
+  subject: string;
+  snippet: string;
+  status: Status;
+  category: string | null;
+  intent: string | null;
+  priority: Priority | null;
+  resolution: string | null;
+  csat_score: number | null;
+  source: "dataset" | "new";
+  created_at: string;
+  score: number;
+  similarity: number | null;
+  matched_by: MatchedBy;
+}
+
+export interface ArticleSummary {
+  id: number;
+  title: string;
+  category: string | null;
+  snippet: string;
+  usage_count: number;
+  updated_at: string;
+}
+
+export interface ArticleHit extends ArticleSummary {
+  score: number;
+  similarity: number | null;
+  matched_by: MatchedBy;
+}
+
+export interface Article {
+  id: number;
+  title: string;
+  body: string;
+  category: string | null;
+  usage_count: number;
+  updated_by: UserRef | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ArticleInput {
+  title: string;
+  body: string;
+  category: string | null;
+}
 
 export interface Comment {
   id: number;

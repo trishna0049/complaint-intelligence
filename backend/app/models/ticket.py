@@ -6,6 +6,7 @@ from typing import Any
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    Computed,
     DateTime,
     Float,
     ForeignKey,
@@ -17,7 +18,7 @@ from sqlalchemy import (
     func,
     text,
 )
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db import Base
@@ -54,6 +55,10 @@ class Ticket(Base):
 
     subject: Mapped[str] = mapped_column(String(255))
     description: Mapped[str] = mapped_column(Text)
+    # Keyword half of the hybrid similar-ticket search (the vector half is ticket_embeddings).
+    description_tsv: Mapped[str | None] = mapped_column(
+        TSVECTOR, Computed("to_tsvector('english', coalesce(description, ''))", persisted=True)
+    )
     # Where the description came from: "customer" (typed in the app), "dataset_remark" (survey remark) or
     # "template" (dataset row had no remark, so a templated sentence was generated — excluded from training).
     description_source: Mapped[str] = mapped_column(String(16), default="customer")
@@ -114,6 +119,7 @@ class Ticket(Base):
         Index("ix_tickets_assignee_status", "assignee_id", "status"),
         Index("ix_tickets_team_status", "team_id", "status"),
         Index("ix_tickets_created_by_id", "created_by_id"),
+        Index("ix_tickets_description_tsv", "description_tsv", postgresql_using="gin"),
         Index(
             "ix_tickets_review_queue",
             "created_at",
@@ -155,6 +161,8 @@ class AIAnalysis(Base):
     prompt_version: Mapped[str | None] = mapped_column(String(16))
     # Token usage and estimated cost for real LLM calls (None for the mock provider).
     usage: Mapped[dict[str, Any] | None] = mapped_column(JSONB(none_as_null=True))
+    # RAG: the past tickets and help articles given to the copilot, and which of them it cited.
+    grounding: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)
     # Human review of the draft reply (copilot only): pending -> accepted | discarded, or superseded by a newer run.
     # The AI never sends anything: "accepted" means an agent posted the (possibly edited) text as a comment.
     draft_status: Mapped[str | None] = mapped_column(String(12))

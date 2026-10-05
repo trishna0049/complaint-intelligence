@@ -1,8 +1,10 @@
-import { AlertTriangle, Bot, Check, ClipboardCopy, Lightbulb, ListChecks, RefreshCw, Send, Sparkles, Trash2 } from "lucide-react";
+import clsx from "clsx";
+import { AlertTriangle, BookOpen, Bot, Check, ClipboardCopy, Lightbulb, ListChecks, RefreshCw, Send, Sparkles, Trash2 } from "lucide-react";
 import { useState, type FormEvent } from "react";
+import { Link } from "react-router-dom";
 import { ApiError } from "@/api/http";
 import { useAcceptDraft, useDiscardDraft, useDraftResponse } from "@/api/client";
-import type { Analysis, TicketDetail } from "@/api/types";
+import type { Analysis, GroundingRef, TicketDetail } from "@/api/types";
 import { Badge, Button, Card, CardHeader, EmptyState, Input, Skeleton, Textarea } from "@/components/ui";
 import { fmtDateTime, fmtRelative } from "@/lib/format";
 
@@ -73,11 +75,36 @@ export function CopilotPanel({ ticket }: { ticket: TicketDetail }) {
               <h4 className="mb-1 flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-slate-500"><ListChecks className="h-3.5 w-3.5" /> Recommended actions</h4>
               <ol className="list-decimal space-y-1 pl-5 text-slate-800">{(insight.recommendations ?? []).map((a) => <li key={a}>{a}</li>)}</ol>
             </section>
+            {insight.grounding && insight.grounding.length > 0 && <Grounding refs={insight.grounding} />}
             <DraftReply key={insight.id} ticket={ticket} insight={insight} onDirty={setDirty} />
           </div>
         )}
       </div>
     </Card>
+  );
+}
+
+/** RAG: which help articles and past tickets the copilot was given; the ones it relied on are highlighted. */
+function Grounding({ refs }: { refs: GroundingRef[] }) {
+  return (
+    <section aria-label="Sources">
+      <h4 className="mb-1 flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
+        <BookOpen className="h-3.5 w-3.5" /> Grounded in
+      </h4>
+      <ul className="flex flex-wrap gap-1.5">
+        {refs.map((r) => (
+          <li key={r.ref}>
+            <Link to={r.type === "article" ? `/knowledge/${r.id}` : `/tickets/${r.id}`}
+              title={r.cited ? "Used by the copilot" : "Given to the copilot, not used"}
+              className={clsx("inline-flex max-w-[260px] items-center gap-1 rounded-md px-2 py-0.5 text-xs ring-1 ring-inset",
+                r.cited ? "bg-violet-50 text-violet-800 ring-violet-200" : "bg-white text-slate-500 ring-slate-200")}>
+              {r.cited && <Check className="h-3 w-3 shrink-0" />}
+              <span className="truncate">{r.type === "article" ? r.title : `${r.ticket_number} · ${r.title}`}</span>
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 

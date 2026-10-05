@@ -13,8 +13,8 @@ and committed locally before the next one starts.
 | 4 | Full ticket lifecycle — 8 states, assign/escalate/resolve/close/reopen, comments, attachments, timeline, audit | ✅ |
 | 5 | Routing — category → team → least-busy agent; low-confidence review queue | ✅ |
 | 6 | Copilot completion — root cause, prompt_version, accept / regenerate / discard | ✅ |
-| 7 | Retrieval — MiniLM embeddings, HNSW, hybrid search, similar tickets, knowledge base, RAG | ⏳ next |
-| 8 | Events — Kafka (KRaft) + UI, outbox relay, 4 workers, idempotency, retries, DLQ + replay | ⏳ |
+| 7 | Retrieval — MiniLM embeddings, HNSW, hybrid search, similar tickets, knowledge base, RAG | ✅ |
+| 8 | Events — Kafka (KRaft) + UI, outbox relay, 4 workers, idempotency, retries, DLQ + replay | ⏳ next |
 | 9 | SLA engine — policies, pause rule, warning/breach once, auto-escalation, live badge, demo speed-up | ⏳ |
 | 10 | Notifications — table, SSE via Redis pub/sub, bell, page, toasts, optional SMTP | ⏳ |
 | 11 | Analytics completion — SLA/timing/repeat/city/product/workload, day/week/month, My stats | ⏳ |
@@ -48,8 +48,13 @@ and committed locally before the next one starts.
   still run inside the request — step 8 moves them to the Kafka AI worker.
 - Copilot (`app/services/copilot.py`, prompt `copilot-v2`): summary, root cause, key issues, next steps, draft reply;
   each run is `pending` until an agent accepts (posted as their `ai_assisted` comment, edited or not) or discards it;
-  re-running supersedes the pending draft. RAG grounding (similar tickets + KB) is added to its context in step 7.
-- Next: step 7 (retrieval: MiniLM embeddings, pgvector HNSW, hybrid search, similar tickets, knowledge base, RAG).
+  re-running supersedes the pending draft. Prompt `copilot-v3` is grounded (RAG) in help articles + similar tickets.
+- Retrieval: MiniLM embeddings (`ticket_embeddings`, HNSW) for 13,779 informative tickets (`.\scripts\dev.ps1 embed`,
+  new tickets embedded on create), 26 seeded help articles (`seed` runs `scripts.seed_knowledge`), hybrid search
+  (vectors + full text, weighted RRF) for `/tickets/{id}/similar` and `/knowledge/search`; Knowledge base screens.
+- Triage, routing and embedding still run inside the create request — step 8 moves them to Kafka workers.
+- Next: step 8 (events: Kafka KRaft + UI, outbox relay, AI / LLM / SLA / notification workers, idempotency via
+  processed_events, 3 retries then DLQ, Admin replay).
 
 ## Step log
 
@@ -187,3 +192,41 @@ and committed locally before the next one starts.
   agent's AI-assisted comment, and the timeline shows run → regenerate → posted → accepted after editing.
 - Tests: 202 backend (17 new copilot tests + malformed-output error case), 42 frontend (7 new), Playwright e2e now
   checks the root cause and edits + accepts the draft before any comment exists.
+
+### Step 7 — Retrieval (embeddings, similar tickets, knowledge base, RAG) ✅
+- `app/ai/embeddings.py`: MiniLM (`all-MiniLM-L6-v2`, 384 dims, normalised; warmed at startup, shown in /health) and a
+  deterministic hashing embedder for tests / when the model can't load. Only informative text is embedded (app
+  tickets + dataset remarks of ≥ 4 words: 13,779 rows; one-word survey remarks and templates are skipped).
+- Migration `0007`: `ticket_embeddings` and `knowledge_articles` (vector(384) + HNSW cosine, m=16,
+  ef_construction=64), generated tsvector columns + GIN indexes (`tickets.description_tsv`,
+  `knowledge_articles.search_vector`), `ai_analyses.grounding`. Round-trip and `alembic check` clean.
+- Hybrid search (`services/retrieval.py`): pgvector nearest neighbours with `hnsw.iterative_scan` (visibility filters
+  still fill the list) + full text (OR query of sanitised words, length-normalised `ts_rank_cd`), fused by weighted
+  RRF. `GET /tickets/{id}/similar` (scoped to the caller), `GET /knowledge/search?q=|ticket_id=` (category boost), CRUD
+  `/knowledge` (Admin, audited, re-embedded when title/body change). `scripts.embed_tickets` backfill (resumable,
+  idempotent): 13,779 vectors in 110 s.
+- Knowledge base: 26 starter articles (two per category + reply-writing and escalation guidance), including the
+  spec's refund-policy article; seeded and embedded by `.\scripts\dev.ps1 seed`.
+- RAG: the copilot gets the top 2 articles [A1].. and top 3 similar tickets [T1].. (caller-visible) as references;
+  prompt `copilot-v3` asks it to follow the articles' policies and to list `references_used`; grounding (+ cited) is
+  stored, cited articles' `usage_count` incremented, unknown citations ignored. References are PII-masked; the ticket's
+  own customer is masked as [CUSTOMER] and restored locally, so drafts greet "Dear Ravi," without the name ever
+  reaching the LLM (found by hand: the real model had written "Dear [NAME],").
+- Evaluation on fixed examples (`ml/retrieval_examples.py`, `ml/eval_retrieval.py` →
+  ml/reports/retrieval_report.md, `.\scripts\dev.ps1 eval-retrieval`): with equal weights hybrid was *worse* than
+  vectors alone (MRR 0.91 vs 0.93 — generic words like "order" pulled wrong articles up) and a 0.35 cut-off dropped
+  correct articles for short queries; keyword weight 0.3 + article threshold 0.20 → recall@1 0.93, recall@3 1.00,
+  MRR 0.96 (tuned on the same 30 queries — documented as optimistic). 8/8 ticket paraphrase triples correct.
+- Bugs found while checking: the first similar-ticket request took 5.4 s (model loaded lazily → warmed at startup;
+  now 0.26–0.37 s on 85,907 tickets); keyword-only matches of long reviews on common words (length normalisation +
+  keyword-only hits only from the top of the keyword ranking); first names alone weren't masked ("Meera" in
+  "thanks, Meera") → each part of a known name is masked as a whole word; a duplicate article title was a 500 (409).
+- Frontend: Similar tickets + Help articles cards on the ticket page, "Grounded in" chips in the copilot (used ones
+  highlighted), Knowledge base page (search by meaning, category filter, grouped list) and article page with Admin
+  create / edit / delete.
+- Checked by hand on the full dataset: similar tickets for the hand-check payment complaint (agent view stays in
+  Payments Support), a refund remark's neighbours are other refund-not-received remarks, KB queries return the right
+  articles; real OpenAI copilot cited the duplicate-payment article and the near-duplicate ticket (~1,400 tokens,
+  ~$0.0003).
+- Tests: 220 backend (+ MiniLM fixed-example tests, skipped where the model isn't cached), 48 frontend, Playwright
+  e2e checks the help article, copilot grounding and a KB search.

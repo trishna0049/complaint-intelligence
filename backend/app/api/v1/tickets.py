@@ -16,6 +16,7 @@ from app.core.db import get_session
 from app.domain.lifecycle import Status
 from app.models import Ticket, User
 from app.schemas.common import Page
+from app.schemas.knowledge import SimilarTicketOut
 from app.schemas.tickets import (
     AnalysisOut,
     AssignRequest,
@@ -31,8 +32,9 @@ from app.schemas.tickets import (
     TicketListItem,
     TicketUpdate,
 )
-from app.services import storage
+from app.services import retrieval, storage
 from app.services import tickets as svc
+from app.services.knowledge import snippet
 
 router = APIRouter(prefix="/tickets", tags=["tickets"])
 Db = Depends(get_session)
@@ -160,6 +162,34 @@ async def close(ticket_id: int, user: CurrentUser, db: AsyncSession = Db) -> Tic
 @router.post("/{ticket_id}/reopen", response_model=TicketDetail)
 async def reopen(ticket_id: int, body: ReasonRequest, user: CurrentUser, db: AsyncSession = Db) -> TicketDetail:
     return await to_detail(db, user, await svc.reopen(db, user, ticket_id, body.reason))
+
+
+@router.get("/{ticket_id}/similar", response_model=list[SimilarTicketOut])
+async def similar(
+    ticket_id: int, user: CurrentUser, db: AsyncSession = Db, limit: int = Query(default=5, ge=1, le=20)
+) -> list[SimilarTicketOut]:
+    """Past tickets like this one (hybrid: meaning + keywords), within what the caller may see."""
+    t = await svc.get_ticket(db, user, ticket_id)
+    return [
+        SimilarTicketOut(
+            id=s.ticket.id,
+            ticket_number=s.ticket.ticket_number,
+            subject=s.ticket.subject,
+            snippet=snippet(s.ticket.description, 180),
+            status=s.ticket.status,
+            category=s.ticket.category,
+            intent=s.ticket.intent,
+            priority=s.ticket.priority,
+            resolution=s.ticket.resolution,
+            csat_score=s.ticket.csat_score,
+            source=s.ticket.source,
+            created_at=s.ticket.created_at,
+            score=round(s.hit.score, 5),
+            similarity=s.hit.similarity,
+            matched_by=s.hit.matched_by,
+        )
+        for s in await retrieval.similar_tickets(db, user, t, limit=limit)
+    ]
 
 
 @router.get("/{ticket_id}/comments", response_model=list[CommentOut])

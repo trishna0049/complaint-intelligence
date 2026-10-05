@@ -7,6 +7,7 @@ import { PriorityBadge, StatusBadge } from "@/components/Badges";
 import { ActionBar } from "@/components/ticket/ActionBar";
 import { CopilotPanel } from "@/components/ticket/CopilotPanel";
 import { Conversation } from "@/components/ticket/Conversation";
+import { HelpArticles, SimilarTickets } from "@/components/ticket/Retrieval";
 import { Timeline } from "@/components/ticket/Timeline";
 import { TriageView } from "@/components/TriageView";
 import { Avatar, Badge, Button, Card, CardHeader, EmptyState, ErrorState, LoadingState, Select } from "@/components/ui";
@@ -119,6 +120,8 @@ export function TicketDetailPage() {
           </Card>
 
           <CustomerCard ticket={t} />
+          <HelpArticles ticketId={t.id} />
+          <SimilarTickets ticketId={t.id} />
 
           <Card>
             <CardHeader title="Details" />

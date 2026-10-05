@@ -14,8 +14,8 @@ const draft: Analysis = {
   id: 5, kind: "copilot", category: "Payments related", intent: "Online Payment Issues", sentiment: "Very Negative", priority: "Critical",
   confidence: 0.82, summary: "Customer reports a payment problem.", root_cause: "Likely a duplicate capture at the payment gateway.",
   key_issues: ["Payment problem"], recommendations: ["Check the payment gateway logs"], draft_response: DRAFT, provider: "mock",
-  model: "mock-copilot-v2", model_version: "triage-v1", prompt_version: "copilot-v2", usage: null, draft_status: "pending",
-  reviewed_by: null, reviewed_at: null, final_response: null, edited: null, comment_id: null, discard_reason: null, created_at: now,
+  model: "mock-copilot-v3", model_version: "triage-v1", prompt_version: "copilot-v3", usage: null, draft_status: "pending",
+  reviewed_by: null, reviewed_at: null, final_response: null, edited: null, comment_id: null, discard_reason: null, grounding: null, created_at: now,
 };
 const withDraft = (copilot: Partial<Analysis> = {}, rest: Partial<TicketDetail> = {}): TicketDetail =>
   ({ ...ticket, copilot: { ...draft, ...copilot }, ...rest });
@@ -28,17 +28,17 @@ describe("copilot on the timeline", () => {
     const t = withDraft({}, {
       timeline: [
         ...ticket.timeline,
-        { id: 3, event_type: "copilot_generated", actor, metadata: { regenerated: false, model: "gpt-4o-mini", prompt_version: "copilot-v2" }, created_at: now },
+        { id: 3, event_type: "copilot_generated", actor, metadata: { regenerated: false, model: "gpt-4o-mini", prompt_version: "copilot-v3" }, created_at: now },
         { id: 4, event_type: "copilot_discarded", actor, metadata: { reason: "Too long" }, created_at: now },
         { id: 5, event_type: "copilot_generated", actor, metadata: { regenerated: true }, created_at: now },
         { id: 6, event_type: "copilot_accepted", actor, metadata: { edited: true }, created_at: now },
       ],
     });
-    mockFetch((u) => (u.includes("/api/v1/tickets/1") ? { body: t } : undefined), signedInAs(agentUser), () => ({ body: [] }));
+    mockFetch((u) => (u.split("?")[0].endsWith("/api/v1/tickets/1") ? { body: t } : undefined), signedInAs(agentUser), () => ({ body: [] }));
     renderRoute(<App />, "/tickets/1");
     const timeline = await screen.findByRole("list", { name: "Ticket timeline" });
     expect(timeline).toHaveTextContent("Arjun Agent ran the AI copilot");
-    expect(timeline).toHaveTextContent("gpt-4o-mini · copilot-v2");
+    expect(timeline).toHaveTextContent("gpt-4o-mini · copilot-v3");
     expect(timeline).toHaveTextContent("Arjun Agent discarded the AI draft");
     expect(timeline).toHaveTextContent("Too long");
     expect(timeline).toHaveTextContent("Arjun Agent regenerated the AI draft");
@@ -48,13 +48,13 @@ describe("copilot on the timeline", () => {
 
 describe("copilot draft review", () => {
   it("shows the likely root cause as a hypothesis and the draft as an editable reply", async () => {
-    mockFetch((u) => (u.includes("/api/v1/tickets/1") ? { body: withDraft() } : undefined), signedInAs(agentUser), () => ({ body: [] }));
+    mockFetch((u) => (u.split("?")[0].endsWith("/api/v1/tickets/1") ? { body: withDraft() } : undefined), signedInAs(agentUser), () => ({ body: [] }));
     renderRoute(<App />, "/tickets/1");
     expect(await screen.findByText("Likely a duplicate capture at the payment gateway.")).toBeInTheDocument();
     expect(screen.getByText(/a hypothesis, verify before acting/)).toBeInTheDocument();
     expect(screen.getByLabelText("Reply to the customer")).toHaveValue(DRAFT);
     expect(screen.getByText(/Nothing is sent until you accept/)).toBeInTheDocument();
-    expect(screen.getByText(/Mock LLM · mock-copilot-v2 · copilot-v2/)).toBeInTheDocument();
+    expect(screen.getByText(/Mock LLM · mock-copilot-v3 · copilot-v3/)).toBeInTheDocument();
   });
 
   it("accepting as drafted posts the draft text and shows who accepted it", async () => {
@@ -63,7 +63,7 @@ describe("copilot draft review", () => {
         ? { body: withDraft({ draft_status: "accepted", reviewed_by: arjun, reviewed_at: now, final_response: bodyOf(i).response, edited: false, comment_id: 9 },
           { comments: [{ id: 9, body: bodyOf(i).response, ai_assisted: true, author: arjun, created_at: now }] }) }
         : undefined),
-      (u) => (u.includes("/api/v1/tickets/1") ? { body: withDraft() } : undefined),
+      (u) => (u.split("?")[0].endsWith("/api/v1/tickets/1") ? { body: withDraft() } : undefined),
       signedInAs(agentUser),
       () => ({ body: [] }),
     );
@@ -80,7 +80,7 @@ describe("copilot draft review", () => {
   it("an edited reply is marked as edited and the edited text is posted", async () => {
     const fetchMock = mockFetch(
       (u, i) => (u.endsWith("/ai/drafts/5/accept") ? { body: withDraft({ draft_status: "accepted", reviewed_by: arjun, reviewed_at: now, final_response: bodyOf(i).response, edited: true }) } : undefined),
-      (u) => (u.includes("/api/v1/tickets/1") ? { body: withDraft() } : undefined),
+      (u) => (u.split("?")[0].endsWith("/api/v1/tickets/1") ? { body: withDraft() } : undefined),
       signedInAs(agentUser),
       () => ({ body: [] }),
     );
@@ -98,7 +98,7 @@ describe("copilot draft review", () => {
   it("discard asks for an optional reason", async () => {
     const fetchMock = mockFetch(
       (u, i) => (u.endsWith("/ai/drafts/5/discard") ? { body: withDraft({ draft_status: "discarded", reviewed_by: arjun, reviewed_at: now, discard_reason: bodyOf(i).reason }) } : undefined),
-      (u) => (u.includes("/api/v1/tickets/1") ? { body: withDraft() } : undefined),
+      (u) => (u.split("?")[0].endsWith("/api/v1/tickets/1") ? { body: withDraft() } : undefined),
       signedInAs(agentUser),
       () => ({ body: [] }),
     );
@@ -116,7 +116,7 @@ describe("copilot draft review", () => {
   it("regenerating over unsaved edits asks first", async () => {
     const fetchMock = mockFetch(
       (u, i) => (u.endsWith("/ai/draft-response") && i?.method === "POST" ? { status: 201, body: { ...draft, id: 6 } } : undefined),
-      (u) => (u.includes("/api/v1/tickets/1") ? { body: withDraft() } : undefined),
+      (u) => (u.split("?")[0].endsWith("/api/v1/tickets/1") ? { body: withDraft() } : undefined),
       signedInAs(adminUser),
       () => ({ body: [] }),
     );
@@ -136,7 +136,7 @@ describe("copilot draft review", () => {
   it("a draft that changed meanwhile (409) is reported, not swallowed", async () => {
     mockFetch(
       (u) => (u.endsWith("/ai/drafts/5/accept") ? { status: 409, body: { detail: { code: "draft_not_pending", message: "This draft was replaced by a newer draft." } } } : undefined),
-      (u) => (u.includes("/api/v1/tickets/1") ? { body: withDraft() } : undefined),
+      (u) => (u.split("?")[0].endsWith("/api/v1/tickets/1") ? { body: withDraft() } : undefined),
       signedInAs(agentUser),
       () => ({ body: [] }),
     );

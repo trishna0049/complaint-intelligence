@@ -1,6 +1,10 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
   Analysis,
+  Article,
+  ArticleHit,
+  ArticleInput,
+  ArticleSummary,
   Attachment,
   Comment,
   CategoryBreakdowns,
@@ -18,6 +22,7 @@ import type {
   TeamMember,
   TicketSummary,
   TriagePreview,
+  SimilarTicket,
   User,
   UserInput,
   UserPatch,
@@ -163,6 +168,50 @@ export const useAcceptDraft = (ticketId: number) =>
 export const useDiscardDraft = (ticketId: number) =>
   useTicketChange(ticketId, ({ analysisId, reason }: { analysisId: number; reason?: string }) =>
     api<TicketDetail>(`/ai/drafts/${analysisId}/discard`, { method: "POST", body: { reason } }));
+
+// ------------------------------------------------------------------ retrieval: similar tickets, knowledge base
+export const useSimilarTickets = (id: number) =>
+  useQuery({ queryKey: ["similar", id], queryFn: () => api<SimilarTicket[]>(`/tickets/${id}/similar`), staleTime: 60_000 });
+
+export const useTicketArticles = (id: number) =>
+  useQuery({
+    queryKey: ["ticket-articles", id],
+    queryFn: () => api<ArticleHit[]>("/knowledge/search", { query: { ticket_id: id, limit: 3 } }),
+    staleTime: 60_000,
+  });
+
+export const useKnowledgeSearch = (q: string, category?: string) =>
+  useQuery({
+    queryKey: ["knowledge-search", q, category],
+    queryFn: () => api<ArticleHit[]>("/knowledge/search", { query: { q, category, limit: 10 } }),
+    enabled: q.trim().length > 1,
+    ...keep,
+  });
+
+export const useArticles = (category?: string) =>
+  useQuery({
+    queryKey: ["articles", category],
+    queryFn: () => api<Page<ArticleSummary>>("/knowledge", { query: { category, page_size: 200 } }),
+  });
+
+export const useArticle = (id: number) => useQuery({ queryKey: ["article", id], queryFn: () => api<Article>(`/knowledge/${id}`) });
+
+function useArticleChange<TVars>(request: (vars: TVars) => Promise<Article | undefined>) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: request,
+    onSuccess: (data) => {
+      if (data) qc.setQueryData(["article", data.id], data);
+      for (const key of ["articles", "knowledge-search", "ticket-articles"]) void qc.invalidateQueries({ queryKey: [key] });
+    },
+  });
+}
+
+export const useCreateArticle = () => useArticleChange((body: ArticleInput) => api<Article>("/knowledge", { method: "POST", body }));
+export const useUpdateArticle = (id: number) =>
+  useArticleChange((body: Partial<ArticleInput>) => api<Article>(`/knowledge/${id}`, { method: "PATCH", body }));
+export const useDeleteArticle = (id: number) =>
+  useArticleChange(() => api<undefined>(`/knowledge/${id}`, { method: "DELETE" }));
 
 // ------------------------------------------------------------------ admin: users, teams, departments, categories
 export const useUsers = (query: Query) =>

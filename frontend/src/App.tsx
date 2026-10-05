@@ -8,6 +8,7 @@ import { CategoriesPage } from "@/pages/admin/CategoriesPage";
 import { TeamsPage } from "@/pages/admin/TeamsPage";
 import { UsersPage } from "@/pages/admin/UsersPage";
 import { DashboardPage } from "@/pages/DashboardPage";
+import { ArticlePage, KnowledgePage } from "@/pages/KnowledgePage";
 import { LoginPage } from "@/pages/LoginPage";
 import { MyWorkPage } from "@/pages/MyWorkPage";
 import { NewTicketPage } from "@/pages/NewTicketPage";
@@ -39,6 +40,8 @@ export default function App() {
           <Route path="tickets" element={<TicketsPage />} />
           <Route path="tickets/new" element={<NewTicketPage />} />
           <Route path="tickets/:id" element={<TicketDetailPage />} />
+          <Route path="knowledge" element={<KnowledgePage />} />
+          <Route path="knowledge/:id" element={<ArticlePage />} />
           <Route path="review" element={<RequireRole role="ADMIN" />}>
             <Route index element={<ReviewQueuePage />} />
           </Route>

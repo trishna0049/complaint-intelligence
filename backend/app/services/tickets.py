@@ -37,7 +37,7 @@ from app.repositories import routing as routing_repo
 from app.repositories import tickets as repo
 from app.repositories import users as users_repo
 from app.schemas.tickets import TicketCreate, TicketUpdate
-from app.services import routing, storage
+from app.services import retrieval, routing, storage
 from app.services.analytics import invalidate_cache
 
 # ------------------------------------------------------------------------------------------------ helpers
@@ -278,6 +278,8 @@ async def create_ticket(db: AsyncSession, user: User, data: TicketCreate) -> Tic
     )
     # Rules, not the LLM: category -> owning team -> least-busy agent (or the review queue). Same transaction.
     await routing.route(db, t, trigger="triage")
+    # Searchable by meaning straight away (similar tickets, copilot grounding).
+    await retrieval.embed_ticket(db, t)
     await commit(db)
     return await get_ticket(db, user, t.id)
 

@@ -25,15 +25,30 @@ _PATTERNS: list[tuple[str, re.Pattern[str]]] = [
 _NAME_INTRO = re.compile(r"\b((?i:my name is|this is|i am))\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})")
 
 
-def mask_pii(text: str, known_names: list[str] | None = None) -> str:
-    """Replace personal data with typed placeholders like [EMAIL] or [PHONE]."""
+CUSTOMER = "[CUSTOMER]"  # the ticket's own customer: restored locally in the model's answer (see app.ai.llm)
+
+
+def _mask_name(out: str, name: str, token: str) -> str:
+    """The full name first, then each part on its own ("Meera" in "thanks, Meera"), as whole words of at least
+    three letters so short fragments can't eat into other words."""
+    out = re.sub(re.escape(name), token, out, flags=re.I)
+    for part in name.split():
+        if len(part) >= 3:
+            out = re.sub(r"\b" + re.escape(part) + r"\b", token, out, flags=re.I)
+    return out
+
+
+def mask_pii(text: str, known_names: list[str] | None = None, customer_name: str | None = None) -> str:
+    """Replace personal data with typed placeholders like [EMAIL] or [PHONE]. The ticket's own customer becomes
+    [CUSTOMER], every other known name (commenters, other customers) [NAME]."""
     if not text:
         return text
     out = text
     for label, pattern in _PATTERNS:
         out = pattern.sub(f"[{label}]", out)
+    if customer_name and len(customer_name.strip()) > 1:
+        out = _mask_name(out, customer_name.strip(), CUSTOMER)
     out = _NAME_INTRO.sub(lambda m: f"{m.group(1)} [NAME]", out)
-    for name in known_names or []:
-        if name and len(name) > 1:
-            out = re.sub(re.escape(name), "[NAME]", out, flags=re.I)
+    for name in sorted({n.strip() for n in known_names or [] if n and len(n.strip()) > 1}, key=len, reverse=True):
+        out = _mask_name(out, name, "[NAME]")
     return out

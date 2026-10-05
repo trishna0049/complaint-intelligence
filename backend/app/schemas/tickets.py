@@ -129,6 +129,8 @@ class AnalysisOut(BaseModel):
     model_version: str | None
     prompt_version: str | None
     alternatives: list[tuple[str, float]] | None = None
+    # RAG references given to the copilot (help articles A1.., similar tickets T1..) and whether each was cited.
+    grounding: list[dict[str, Any]] | None = None
     usage: dict[str, Any] | None = None
     # Human review of the draft (copilot runs): pending | accepted | discarded | superseded
     draft_status: str | None = None

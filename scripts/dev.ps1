@@ -9,6 +9,7 @@
   .\scripts\dev.ps1 seed      # teams, categories, admin + dataset agents
   .\scripts\dev.ps1 train     # profile data, train classifiers, validate sentiment model
   .\scripts\dev.ps1 import    # load the dataset into Postgres
+  .\scripts\dev.ps1 embed     # MiniLM embeddings for similar-ticket search (after import)
   .\scripts\dev.ps1 start     # API + web app (opens two windows)
 #>
 param(
@@ -72,7 +73,7 @@ switch ($Command) {
         Run $Py @("-m", "pip", "install", "--no-cache-dir", "--upgrade", "pip")
         Run $Py @("-m", "pip", "install", "--no-cache-dir", "-r", "backend\requirements.txt", "-r", "backend\requirements-dev.txt")
         Run "npm" @("install", "--no-audit", "--no-fund", "--cache", (Join-Path $Root ".npm-cache")) (Join-Path $Root "frontend")
-        Write-Host "`nSetup complete. Next: .\scripts\dev.ps1 train ; .\scripts\dev.ps1 import ; .\scripts\dev.ps1 start" -ForegroundColor Green
+        Write-Host "`nSetup complete. Next: .\scripts\dev.ps1 up ; migrate ; seed ; train ; import ; embed ; start" -ForegroundColor Green
     }
 
     "up" {
@@ -104,6 +105,18 @@ switch ($Command) {
     "import" {
         Need-Venv; Need-Data
         Run $Py (@("-m", "scripts.import_dataset") + $Rest) (Join-Path $Root "backend")
+    }
+
+    "embed" {
+        # Backfill ticket embeddings (MiniLM, 384 dims) for similar-ticket search and copilot grounding (idempotent).
+        Need-Venv
+        Run $Py (@("-m", "scripts.embed_tickets") + $Rest) (Join-Path $Root "backend")
+    }
+
+    "eval-retrieval" {
+        # Knowledge-base and similar-ticket retrieval on fixed examples -> ml\reports\retrieval_report.md
+        Need-Venv
+        Run $Py @("ml\eval_retrieval.py")
     }
 
     "reset-db" {
@@ -163,8 +176,10 @@ Usage: .\scripts\dev.ps1 <command>
   up | down  Start / stop Postgres (pgvector) + Redis in Docker (down -v also deletes the data)
   migrate    Create the database if needed and apply the Alembic migrations
   train      Profile the dataset, train category/intent classifiers, validate the sentiment model
-  seed       Teams, categories, the admin and the 1,371 dataset agents (idempotent; prints demo logins)
+  seed       Teams, categories, admin, the 1,371 dataset agents and the knowledge base (idempotent; prints logins)
   import     Load data\ecommerce_support.csv into Postgres (idempotent, batched)
+  embed      Embed tickets for similar-ticket search (MiniLM; run after import, idempotent)
+  eval-retrieval  Retrieval evaluation on fixed examples (needs seed) -> ml\reports\retrieval_report.md
   start      Start the API and the web app in two new windows
   api | web  Start only the API (uvicorn --reload) or only the Vite dev server
   test       Backend (pytest) + frontend (Vitest) tests
