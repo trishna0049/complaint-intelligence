@@ -67,7 +67,18 @@ function describe(e: TimelineEvent): { icon: ReactNode; text: ReactNode; detail?
         detail: m.priority_from !== m.priority_to ? `Priority ${str(m.priority_from)} → ${str(m.priority_to)} (rules)` : undefined,
       };
     case "copilot_generated":
-      return { icon: <Bot className="h-3.5 w-3.5 text-violet-500" />, text: <><b>{who}</b> ran the AI copilot</> };
+      return {
+        icon: <Bot className="h-3.5 w-3.5 text-violet-500" />,
+        text: <><b>{who}</b> {m.regenerated ? "regenerated the AI draft" : "ran the AI copilot"}</>,
+        detail: [str(m.model), str(m.prompt_version)].filter(Boolean).join(" · ") || undefined,
+      };
+    case "copilot_accepted":
+      return {
+        icon: <CheckCircle2 className="h-3.5 w-3.5 text-violet-500" />,
+        text: <><b>{who}</b> accepted the AI draft {m.edited ? "after editing it" : "as drafted"}</>,
+      };
+    case "copilot_discarded":
+      return { icon: <Bot className="h-3.5 w-3.5 text-slate-400" />, text: <><b>{who}</b> discarded the AI draft</>, detail: str(m.reason) || undefined };
     case "first_response":
       return { icon: <MessageSquare className="h-3.5 w-3.5" />, text: <>First response by <b>{who}</b></> };
     default:

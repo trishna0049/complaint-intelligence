@@ -15,7 +15,7 @@ Satisfaction* dataset (85,907 support records from an Indian e-commerce company)
 | Entities | Rules: ₹ amounts (₹/Rs/INR/lakh), order IDs, dates, products, repeat-contact cues |
 | Priority (Low → Critical) | Transparent raise-only business rules ([docs/PRIORITY_RULES.md](docs/PRIORITY_RULES.md)) — never the LLM |
 | Routing (team + agent) | Deterministic rules: category → owning team → least-busy agent; low confidence → review queue ([docs/ROUTING_RULES.md](docs/ROUTING_RULES.md)) |
-| Summary, key issues, recommended actions, draft reply | OpenAI API with structured outputs; offline **mock** provider when no key is set; PII masked first |
+| Copilot: summary, likely root cause, key issues, next steps, draft reply | OpenAI API with structured outputs (prompt `copilot-v2`, uses the ticket's conversation as context); offline **mock** provider when no key is set; PII masked first; the draft is only posted when an agent accepts it |
 | Dashboard | KPIs, daily volume & sentiment trends, category / intent / channel breakdowns, week-over-week emerging issues, open high-priority list, auto-generated insights |
 
 ---
@@ -37,12 +37,13 @@ Prerequisites: Python 3.12, Node 20+, Docker Desktop, and the dataset CSV saved 
 Other commands: `.\scripts\dev.ps1 test` (needs `up`), `lint`, `api`, `web`, `down`, `reset-db`.
 
 **End-to-end test:** `.\scripts\dev.ps1 e2e` runs a Playwright test of the whole flow (dashboard → new complaint →
-Analyze → save → AI insights → list search → dashboard → resolve). It starts its own API and web servers on ports
+Analyze → save → routing → copilot → edit + accept the draft → list search → dashboard → reassign → start → comment +
+attachment → resolve → close → timeline). It starts its own API and web servers on ports
 18100/15200 with a separate Postgres database (`complaints_e2e`, wiped on every run) and the mock LLM, so it never
 touches your data. It needs the trained
 models; Chromium is downloaded into `.pw-browsers\` on first run. Ports live in `.env`
 (`API_PORT`, `WEB_PORT`). To use OpenAI, set `LLM_PROVIDER=openai` and `OPENAI_API_KEY=...` in `.env` and restart
-the API; each insight then shows its token count and estimated cost.
+the API; each copilot run then shows its token count and estimated cost.
 
 On macOS/Linux the same steps are: `python -m venv backend/.venv`, `pip install -r backend/requirements.txt -r
 backend/requirements-dev.txt`, `python ml/train_classifiers.py`, `python ml/eval_sentiment.py`,
@@ -69,7 +70,9 @@ and are renewed automatically from an HttpOnly refresh cookie; reusing an old re
    Try *Fill example*: "I was charged twice for my order of ₹12,500 and have already contacted support three
    times…" → Payments related · Very Negative · ₹12,500 · repeat contact → **Critical**.
 3. **Ticket details (the agent's workspace)** — complaint, customer profile and previous tickets, AI triage,
-   copilot (LLM summary, key issues, recommended actions and a draft reply — never sent automatically), comments,
+   copilot (summary, likely root cause, key issues, next steps and an editable draft reply: **accept** posts it as
+   the agent's comment marked AI-assisted, **regenerate** replaces it, **discard** drops it — the AI never sends
+   anything itself), comments,
    attachments and the full timeline. Correct the category if the model was wrong — priority is recomputed by the
    rules. The action bar shows only the moves the current user may make right now.
 4. **Lifecycle** — 8 states: `NEW → TRIAGED → ASSIGNED → IN_PROGRESS ⇄ WAITING_CUSTOMER`, `ESCALATED`, `RESOLVED →
@@ -132,7 +135,8 @@ needs `Authorization: Bearer <access token>`; Admin-only routes return 403 for a
 | GET / POST | `/tickets/{id}/comments` · `/tickets/{id}/timeline` | Comments (first one sets `first_response_at`) · event timeline |
 | POST / GET | `/tickets/{id}/attachments` · `/attachments/{aid}` | Upload (allow-listed types, content sniffed, 10 MB) · download |
 | GET | `/teams/{id}/members` | Active members with their open-ticket load (agents: own team) |
-| POST | `/ai/draft-response` | Copilot for `{ticket_id}`: LLM summary, key issues, recommended actions, draft reply |
+| POST | `/ai/draft-response` | Copilot for `{ticket_id}`: summary, root cause, key issues, next steps, draft reply (re-running supersedes the pending draft) |
+| POST | `/ai/drafts/{id}/accept` · `/ai/drafts/{id}/discard` | Agent review of a draft: accept `{response}` (as is or edited → AI-assisted comment) or discard `{reason?}` |
 | GET | `/analytics/overview`, `/trends?granularity=day\|week\|month`, `/categories`, `/emerging` | Dashboard analytics (Redis-cached) |
 | GET | `/health` | Model versions in use (public) |
 | POST / GET | `/auth/login`, `/auth/refresh`, `/auth/logout` · `/auth/me` | Sign in (refresh token in an HttpOnly cookie), rotate, sign out · current user |

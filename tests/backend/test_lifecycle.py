@@ -177,7 +177,7 @@ async def test_event_and_audit_are_written_in_the_same_transaction(client, org, 
         await db.flush()
         raise RuntimeError("database went away")
 
-    monkeypatch.setattr(svc, "_done", boom)
+    monkeypatch.setattr(svc, "commit", boom)
     before_events, before_audits = len(await events(tid)), len(await audits())
     with pytest.raises(RuntimeError):
         await client.post(f"/api/v1/tickets/{tid}/escalate", json={"reason": "angry customer"})

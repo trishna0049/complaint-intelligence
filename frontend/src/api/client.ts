@@ -146,6 +146,7 @@ export async function downloadAttachment(ticketId: number, att: Attachment) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+/** Run (or re-run) the copilot. A previous pending draft becomes "superseded". */
 export function useDraftResponse(id: number) {
   const qc = useQueryClient();
   return useMutation({
@@ -153,6 +154,15 @@ export function useDraftResponse(id: number) {
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["ticket", id] }),
   });
 }
+
+/** The agent approves the draft (as is or edited): it is posted as their AI-assisted comment. */
+export const useAcceptDraft = (ticketId: number) =>
+  useTicketChange(ticketId, ({ analysisId, response }: { analysisId: number; response: string }) =>
+    api<TicketDetail>(`/ai/drafts/${analysisId}/accept`, { method: "POST", body: { response } }));
+
+export const useDiscardDraft = (ticketId: number) =>
+  useTicketChange(ticketId, ({ analysisId, reason }: { analysisId: number; reason?: string }) =>
+    api<TicketDetail>(`/ai/drafts/${analysisId}/discard`, { method: "POST", body: { reason } }));
 
 // ------------------------------------------------------------------ admin: users, teams, departments, categories
 export const useUsers = (query: Query) =>

@@ -77,6 +77,7 @@ export interface Analysis {
   priority: Priority | null;
   confidence: number | null;
   summary: string | null;
+  root_cause: string | null;
   key_issues: string[] | null;
   recommendations: string[] | null;
   draft_response: string | null;
@@ -85,8 +86,18 @@ export interface Analysis {
   model_version: string | null;
   prompt_version: string | null;
   usage: Usage | null;
+  /** Human review of the draft: nothing reaches the customer unless an agent accepts it. */
+  draft_status: DraftStatus | null;
+  reviewed_by: UserRef | null;
+  reviewed_at: string | null;
+  final_response: string | null;
+  edited: boolean | null;
+  comment_id: number | null;
+  discard_reason: string | null;
   created_at: string;
 }
+
+export type DraftStatus = "pending" | "accepted" | "discarded" | "superseded";
 
 export interface Comment {
   id: number;

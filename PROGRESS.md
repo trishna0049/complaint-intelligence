@@ -12,8 +12,8 @@ and committed locally before the next one starts.
 | 3 | Auth and roles — JWT + rotating refresh tokens, argon2, ADMIN/AGENT guards, admin screens | ✅ |
 | 4 | Full ticket lifecycle — 8 states, assign/escalate/resolve/close/reopen, comments, attachments, timeline, audit | ✅ |
 | 5 | Routing — category → team → least-busy agent; low-confidence review queue | ✅ |
-| 6 | Copilot completion — root cause, prompt_version, accept / regenerate / discard | ⏳ next |
-| 7 | Retrieval — MiniLM embeddings, HNSW, hybrid search, similar tickets, knowledge base, RAG | ⏳ |
+| 6 | Copilot completion — root cause, prompt_version, accept / regenerate / discard | ✅ |
+| 7 | Retrieval — MiniLM embeddings, HNSW, hybrid search, similar tickets, knowledge base, RAG | ⏳ next |
 | 8 | Events — Kafka (KRaft) + UI, outbox relay, 4 workers, idempotency, retries, DLQ + replay | ⏳ |
 | 9 | SLA engine — policies, pause rule, warning/breach once, auto-escalation, live badge, demo speed-up | ⏳ |
 | 10 | Notifications — table, SSE via Redis pub/sub, bell, page, toasts, optional SMTP | ⏳ |
@@ -46,7 +46,10 @@ and committed locally before the next one starts.
   category → owning team → least-busy active agent (per-team advisory lock); low confidence → Admin **Review queue**
   (`/review`); confirming/correcting the category routes untouched tickets; Admin "Auto-assign". Triage + routing
   still run inside the request — step 8 moves them to the Kafka AI worker.
-- Next: step 6 (copilot completion: root cause, prompt_version, accept / regenerate / discard).
+- Copilot (`app/services/copilot.py`, prompt `copilot-v2`): summary, root cause, key issues, next steps, draft reply;
+  each run is `pending` until an agent accepts (posted as their `ai_assisted` comment, edited or not) or discards it;
+  re-running supersedes the pending draft. RAG grounding (similar tickets + KB) is added to its context in step 7.
+- Next: step 7 (retrieval: MiniLM embeddings, pgvector HNSW, hybrid search, similar tickets, knowledge base, RAG).
 
 ## Step log
 
@@ -159,3 +162,28 @@ and committed locally before the next one starts.
   round-robin, concurrency, capacity, team queue, unrouted, review → confirm, correction moves/releases/keeps owner,
   auto-assign permissions and 409s, manual assignment counts for round-robin), 35 frontend (7 new), Playwright e2e
   checks the routing decision and a manual reassignment.
+
+### Step 6 — Copilot completion ✅
+- Prompt `copilot-v2` (structured output `ComplaintInsight`): adds `root_cause` (a hypothesis to verify) and the
+  ticket's last 6 comments as context, PII-masked like the complaint (customer and commenter names, phones, e-mails).
+  The prompt tells the model to treat the team's notes as established facts.
+- Migration `0006`: `ai_analyses.root_cause` and the human review of each draft — `draft_status` (pending /
+  accepted / discarded / superseded), `reviewed_by_id`, `reviewed_at`, `final_response`, `edited`, `comment_id`,
+  `discard_reason`; existing copilot rows → newest per ticket pending, older superseded (checked on seeded rows).
+- `POST /ai/draft-response` (generate / regenerate: the old pending draft becomes superseded),
+  `POST /ai/drafts/{id}/accept` (the agent's final text becomes their comment marked `ai_assisted`, sets first
+  response; `edited` and a similarity score are recorded) and `/discard` (optional reason). Only pending drafts can be
+  reviewed (409 otherwise); drafts on tickets the user can't see → 404. Timeline events copilot_generated (with
+  `regenerated`), copilot_accepted, copilot_discarded.
+- The read transaction now ends before the LLM call (no connection idle in a transaction for up to 30 s). A
+  schema-violating answer from a compatible endpoint is a clear `llm_invalid_output` error instead of a 500 (found
+  by a test).
+- Frontend: `CopilotPanel` with the likely root cause (marked as a hypothesis), editable draft ("Edited" badge,
+  "Accept edited reply"), discard with optional reason, regenerate that warns before dropping unsaved edits,
+  accepted/discarded states with who and when; timeline wording for every copilot event.
+- Checked by hand with the real OpenAI API (gpt-4o-mini, ~600 tokens, ~$0.0002, 3.6 s): valid v2 output with root
+  cause. The first answer ignored the agent's note that the gateway was already checked, so the prompt was tightened
+  — the regenerated answer leads with the refund. Edited the draft in the UI and accepted it: it appeared as the
+  agent's AI-assisted comment, and the timeline shows run → regenerate → posted → accepted after editing.
+- Tests: 202 backend (17 new copilot tests + malformed-output error case), 42 frontend (7 new), Playwright e2e now
+  checks the root cause and edits + accepts the draft before any comment exists.

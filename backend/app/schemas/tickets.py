@@ -120,6 +120,7 @@ class AnalysisOut(BaseModel):
     priority: str | None
     confidence: float | None
     summary: str | None
+    root_cause: str | None = None
     key_issues: list[str] | None
     recommendations: list[str] | None
     draft_response: str | None
@@ -129,6 +130,14 @@ class AnalysisOut(BaseModel):
     prompt_version: str | None
     alternatives: list[tuple[str, float]] | None = None
     usage: dict[str, Any] | None = None
+    # Human review of the draft (copilot runs): pending | accepted | discarded | superseded
+    draft_status: str | None = None
+    reviewed_by: UserRef | None = None
+    reviewed_at: datetime | None = None
+    final_response: str | None = None
+    edited: bool | None = None
+    comment_id: int | None = None
+    discard_reason: str | None = None
     created_at: datetime
 
 

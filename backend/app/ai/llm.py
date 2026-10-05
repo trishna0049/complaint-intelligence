@@ -1,11 +1,11 @@
-"""LLM complaint insights: summary, key issues, recommended actions and a suggested reply.
+"""LLM copilot: summary, likely root cause, key issues, recommended next steps and a draft reply.
 
 * LLM_PROVIDER=openai uses the OpenAI API with structured outputs (the response is parsed into
   the `ComplaintInsight` schema, so it is always valid JSON with the right fields).
 * LLM_PROVIDER=mock (default) produces realistic, deterministic output offline — no key needed.
 
-Personal data is masked before the text leaves the process. The suggested reply is only a draft:
-an agent must review it; nothing is ever sent to the customer automatically.
+Personal data is masked before the text leaves the process (the complaint and the conversation so far). The reply
+is only a draft: an agent must review, optionally edit, and accept it — nothing is ever sent automatically.
 
 OpenAI failures are never hidden behind mock output: each one is raised as an `LLMError` with an
 HTTP status and a message the UI shows as-is (bad key, rate limit / quota, timeout, network, ...).
@@ -19,27 +19,33 @@ import time
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from app.ai.pii import mask_pii
 from app.core.config import get_settings
 
 log = logging.getLogger(__name__)
 
-PROMPT_VERSION = "insight-v1"
+PROMPT_VERSION = "copilot-v2"
 
 SYSTEM_PROMPT = """You are a senior customer-support analyst for Shopzilla, an Indian e-commerce company.
-Given one customer complaint and its automated triage, produce:
+Given one customer complaint, its automated triage and the conversation on the ticket so far, produce:
 - summary: 1-2 sentences, neutral, factual.
+- root_cause: the most likely underlying cause in one sentence, phrased as a hypothesis the agent should verify
+  ("Likely ..."). If the complaint does not support a cause, say "Unclear from the complaint" and what to check.
 - key_issues: 1-4 short noun phrases naming the concrete problems.
 - recommended_actions: 2-5 imperative, specific next steps for the support agent (check systems, refund, escalate...).
 - customer_reply: a short, empathetic draft reply the agent can edit. Do not promise anything you cannot verify;
-  never invent order details, amounts or dates that are not in the complaint.
+  never invent order details, amounts, dates or reference numbers that are not in the complaint or conversation.
+The conversation is the support team's notes and replies so far. Treat what it reports as established facts: never
+recommend a check it says was already done — recommend the step that follows from its result — and let those facts
+shape the root cause and the reply.
 Placeholders like [EMAIL] or [PHONE] are masked personal data; keep them as-is."""
 
 
 class ComplaintInsight(BaseModel):
     summary: str = Field(description="1-2 sentence neutral summary")
+    root_cause: str = Field(description="Most likely underlying cause, phrased as a hypothesis to verify")
     key_issues: list[str] = Field(min_length=1, max_length=4)
     recommended_actions: list[str] = Field(min_length=1, max_length=5)
     customer_reply: str
@@ -79,6 +85,10 @@ def build_user_prompt(masked_text: str, context: dict[str, Any]) -> str:
     for key in ("category", "intent", "sentiment", "priority", "channel", "product", "amount_inr"):
         if context.get(key) not in (None, ""):
             lines.append(f"{key.replace('_', ' ').title()}: {context[key]}")
+    conversation = context.get("conversation") or []
+    if conversation:
+        lines.append("Conversation so far (oldest first):")
+        lines.extend(f"- {c['author']}: {c['body']}" for c in conversation)
     return "\n".join(lines)
 
 
@@ -110,12 +120,16 @@ class OpenAIProvider:
             )
         except openai.OpenAIError as exc:
             raise map_openai_error(exc, model=self.model, timeout=self.timeout) from exc
+        except ValidationError as exc:  # a compatible endpoint returned JSON that doesn't match the schema
+            raise LLMError(
+                "llm_invalid_output", "The model returned a malformed copilot answer (missing fields). Try again.", 502
+            ) from exc
         message = completion.choices[0].message
         if message.parsed is None:
             reason = getattr(message, "refusal", None) or "no structured content returned"
-            raise LLMError("llm_refused", f"OpenAI did not return insights: {reason}", 502)
+            raise LLMError("llm_refused", f"OpenAI did not return a copilot answer: {reason}", 502)
         usage = usage_from(completion, time.perf_counter() - started)
-        log.info("openai insight call %s", usage)
+        log.info("openai copilot call %s", usage)
         return message.parsed, usage
 
 
@@ -166,12 +180,12 @@ def map_openai_error(exc: Exception, *, model: str, timeout: float) -> LLMError:
     if isinstance(exc, openai.APIConnectionError):
         return LLMError("llm_unreachable", "Could not reach the OpenAI API. Check the network connection.", 502)
     if isinstance(exc, openai.LengthFinishReasonError | openai.ContentFilterFinishReasonError):
-        return LLMError("llm_incomplete", "OpenAI stopped before finishing the insights. Try again.", 502)
+        return LLMError("llm_incomplete", "OpenAI stopped before finishing the copilot answer. Try again.", 502)
     if isinstance(exc, openai.APIStatusError):
         return LLMError(
             "llm_upstream_error", f"OpenAI returned an error (HTTP {exc.status_code}). Try again later.", 502
         )
-    return LLMError("llm_error", "The insight request to OpenAI failed. Try again.", 502)
+    return LLMError("llm_error", "The copilot request to OpenAI failed. Try again.", 502)
 
 
 def _retry_after(exc: Any) -> int | None:
@@ -187,6 +201,10 @@ def _retry_after(exc: Any) -> int | None:
 PLAYBOOK: dict[str, dict[str, Any]] = {
     "Payments related": {
         "issue": "payment problem",
+        "cause": (
+            "Likely a duplicate capture at the payment gateway, or a debit whose order confirmation failed — "
+            "verify the number of successful transactions for the order."
+        ),
         "actions": [
             "Check the payment gateway logs for the order and confirm how many successful debits exist",
             "If a duplicate debit is confirmed, raise a reversal for the extra amount",
@@ -195,6 +213,10 @@ PLAYBOOK: dict[str, dict[str, Any]] = {
     },
     "Refund Related": {
         "issue": "refund not received",
+        "cause": (
+            "Likely the refund was initiated but is still in the bank's settlement window, or it failed and was "
+            "never re-triggered — check the refund status and reference."
+        ),
         "actions": [
             "Look up the refund status and reference number for the order",
             "If the refund is past its SLA, escalate to the finance team with the transaction details",
@@ -203,6 +225,10 @@ PLAYBOOK: dict[str, dict[str, Any]] = {
     },
     "Returns": {
         "issue": "return / pickup problem",
+        "cause": (
+            "Likely a missed or unassigned reverse-pickup slot with the logistics partner — check the pickup "
+            "attempts on the return request."
+        ),
         "actions": [
             "Verify the return request status and pickup slot in the logistics system",
             "Reschedule the reverse pickup or arrange a self-ship option",
@@ -211,6 +237,10 @@ PLAYBOOK: dict[str, dict[str, Any]] = {
     },
     "Order Related": {
         "issue": "order delivery problem",
+        "cause": (
+            "Likely a courier delay or a shipment stuck at a hub — check the last tracking scan against the "
+            "promised date."
+        ),
         "actions": [
             "Check the shipment tracking and the last courier scan",
             "Contact the courier partner for an updated delivery date",
@@ -219,6 +249,10 @@ PLAYBOOK: dict[str, dict[str, Any]] = {
     },
     "Cancellation": {
         "issue": "cancellation request",
+        "cause": (
+            "Likely the order moved past the cancellable stage before the request was processed — check the "
+            "shipment status at the time of the request."
+        ),
         "actions": [
             "Check whether the order has already shipped",
             "Cancel the order or initiate return-to-origin if it is in transit",
@@ -227,6 +261,7 @@ PLAYBOOK: dict[str, dict[str, Any]] = {
     },
     "Product Queries": {
         "issue": "product question",
+        "cause": "Likely missing or unclear information on the product page — check the listing and warranty terms.",
         "actions": [
             "Answer from the product specification and warranty terms",
             "Share the nearest authorised service centre if needed",
@@ -234,6 +269,10 @@ PLAYBOOK: dict[str, dict[str, Any]] = {
     },
     "Feedback": {
         "issue": "service quality feedback",
+        "cause": (
+            "Likely an earlier support interaction that fell short of expectations — review the customer's recent"
+            " contacts."
+        ),
         "actions": [
             "Acknowledge the feedback and apologise for the experience",
             "Log the interaction for quality review with the team lead",
@@ -241,6 +280,10 @@ PLAYBOOK: dict[str, dict[str, Any]] = {
     },
     "Offers & Cashback": {
         "issue": "cashback / offer not applied",
+        "cause": (
+            "Likely the order did not meet an offer condition (payment method, minimum value or validity) or the "
+            "cashback job has not run yet."
+        ),
         "actions": [
             "Verify the offer terms and the customer's eligibility",
             "Credit the cashback manually if the order qualified",
@@ -249,6 +292,7 @@ PLAYBOOK: dict[str, dict[str, Any]] = {
 }
 DEFAULT_PLAY = {
     "issue": "customer issue",
+    "cause": "Unclear from the complaint — review the customer's order and account history to find the cause.",
     "actions": ["Review the customer's order and account history", "Resolve or route to the right specialist team"],
 }
 
@@ -257,7 +301,7 @@ class MockProvider:
     """Deterministic, offline stand-in that builds realistic output from the triage results."""
 
     name = "mock"
-    model = "mock-insight-v1"
+    model = "mock-copilot-v2"
 
     def generate(self, complaint_text: str, context: dict[str, Any]) -> tuple[ComplaintInsight, Usage | None]:
         category = context.get("category") or "General"
@@ -283,6 +327,9 @@ class MockProvider:
         actions = list(play["actions"])
         if entities.get("repeat_contact") or priority in ("High", "Critical"):
             actions.insert(0, "Take ownership now and call the customer back within the hour")
+        conversation = context.get("conversation") or []
+        if conversation:
+            actions.insert(0, f"Follow up on the latest note from {conversation[-1]['author']} before replying")
 
         apology = "I'm sorry for the trouble" + (
             " and that you had to contact us more than once" if entities.get("repeat_contact") else ""
@@ -292,7 +339,11 @@ class MockProvider:
             f"into it now. I'll update you with the outcome and next steps shortly.\n\nRegards,\nShopzilla Support"
         )
         insight = ComplaintInsight(
-            summary=summary, key_issues=issues[:4], recommended_actions=actions[:5], customer_reply=reply
+            summary=summary,
+            root_cause=play["cause"],
+            key_issues=issues[:4],
+            recommended_actions=actions[:5],
+            customer_reply=reply,
         )
         return insight, None
 
@@ -313,8 +364,14 @@ def get_provider() -> InsightProvider:
 
 
 def generate_insight(text: str, context: dict[str, Any], known_names: list[str] | None = None) -> InsightRun:
-    """Mask personal data, then ask the configured provider. Errors propagate as LLMError."""
+    """Mask personal data (complaint and conversation), then ask the configured provider. Errors propagate as
+    LLMError."""
     provider = get_provider()
     masked = mask_pii(text, known_names)
+    if context.get("conversation"):
+        context = {
+            **context,
+            "conversation": [{**c, "body": mask_pii(c["body"], known_names)} for c in context["conversation"]],
+        }
     insight, usage = provider.generate(masked, context)
     return InsightRun(insight=insight, provider=provider.name, model=provider.model, usage=usage)

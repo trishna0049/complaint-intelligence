@@ -38,7 +38,9 @@ const copilot: Analysis = {
   id: 5, kind: "copilot", category: "Payments related", intent: "Online Payment Issues", sentiment: "Very Negative", priority: "Critical",
   confidence: 0.82, summary: "Customer reports a payment problem.", key_issues: ["Payment problem", "Amount involved: ₹12,500"],
   recommendations: ["Check the payment gateway logs"], draft_response: "Hello, I'm sorry…", provider: "mock",
-  model: "mock-insight-v1", model_version: "triage-v1", prompt_version: "insight-v1", usage: null, created_at: new Date().toISOString(),
+  model: "mock-copilot-v2", model_version: "triage-v1", prompt_version: "copilot-v2", usage: null, created_at: new Date().toISOString(),
+  root_cause: "Likely a duplicate capture at the payment gateway.", draft_status: "pending", reviewed_by: null, reviewed_at: null,
+  final_response: null, edited: null, comment_id: null, discard_reason: null,
 };
 
 describe("components", () => {

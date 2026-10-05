@@ -51,9 +51,18 @@ test("ticket is triaged, summarised, tracked on the dashboard and resolved", asy
   await page.getByRole("button", { name: "Run copilot" }).click();
   await expect(page.getByRole("heading", { name: "Recommended actions" })).toBeVisible();
   await expect(page.getByText(/^Customer reports a payment problem/)).toBeVisible();
-  await expect(page.getByText(/Mock LLM · mock-insight-v1 · insight-v1/)).toBeVisible();
+  await expect(page.getByText(/Mock LLM · mock-copilot-v2 · copilot-v2/)).toBeVisible();
   await expect(page.getByText("Amount involved: ₹12,500")).toBeVisible();
+  await expect(page.getByText(/^Likely a duplicate capture at the payment gateway/)).toBeVisible();
   await expect(page.getByRole("button", { name: "Regenerate" })).toBeVisible();
+
+  // 4b. Human in the loop: nothing is posted until the agent accepts; here they edit the draft first.
+  await expect(page.getByText("No comments yet")).toBeVisible();
+  const reply = page.getByLabel("Reply to the customer");
+  await reply.fill("Hello, we confirmed the duplicate debit of ₹12,500 and are reversing it today.");
+  await page.getByRole("button", { name: "Accept edited reply" }).click();
+  await expect(page.getByRole("region", { name: "Accepted reply" })).toContainText("edited before posting");
+  await expect(page.getByText("AI-assisted")).toBeVisible();
 
   // 5. Ticket list: search finds it with its triage columns.
   await nav("Ticket queue").click();
@@ -106,7 +115,8 @@ test("ticket is triaged, summarised, tracked on the dashboard and resolved", asy
   await actions.getByRole("button", { name: "Close" }).click();
   await expect(actions.getByRole("button", { name: "Reopen" })).toBeVisible();
 
-  for (const text of ["created the ticket", "AI triage: Payments related", "Routing rules: assigned to", "assigned it to",
+  for (const text of ["created the ticket", "AI triage: Payments related", "Routing rules: assigned to", "ran the AI copilot",
+    "accepted the AI draft after editing it", "assigned it to",
     "to In progress", "commented",
     "attached statement.txt", "to Resolved", "to Closed"]) {
     await expect(timeline).toContainText(text);

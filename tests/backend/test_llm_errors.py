@@ -18,6 +18,7 @@ from app.core.config import get_settings
 
 GOOD_INSIGHT = {
     "summary": "Customer was charged twice for an order of ₹12,500.",
+    "root_cause": "Likely a duplicate capture at the payment gateway.",
     "key_issues": ["Duplicate charge"],
     "recommended_actions": ["Verify the duplicate debit", "Refund the extra charge"],
     "customer_reply": "Hello, we are looking into the duplicate charge.",
@@ -83,27 +84,32 @@ class StubOpenAI(BaseHTTPRequestHandler):
                     }
                 },
             )
+        elif model == "malformed":  # e.g. a compatible endpoint that ignores the schema
+            self._completion({"summary": "only a summary"})
         elif model == "slow":
             time.sleep(2)
             self._send(200, {})
         else:
-            self._send(
-                200,
-                {
-                    "id": "chatcmpl-test",
-                    "object": "chat.completion",
-                    "created": 0,
-                    "model": "gpt-4o-mini-2024-07-18",
-                    "choices": [
-                        {
-                            "index": 0,
-                            "finish_reason": "stop",
-                            "message": {"role": "assistant", "content": json.dumps(GOOD_INSIGHT)},
-                        }
-                    ],
-                    "usage": {"prompt_tokens": 300, "completion_tokens": 150, "total_tokens": 450},
-                },
-            )
+            self._completion(GOOD_INSIGHT)
+
+    def _completion(self, content: dict) -> None:  # type: ignore[type-arg]
+        self._send(
+            200,
+            {
+                "id": "chatcmpl-test",
+                "object": "chat.completion",
+                "created": 0,
+                "model": "gpt-4o-mini-2024-07-18",
+                "choices": [
+                    {
+                        "index": 0,
+                        "finish_reason": "stop",
+                        "message": {"role": "assistant", "content": json.dumps(content)},
+                    }
+                ],
+                "usage": {"prompt_tokens": 300, "completion_tokens": 150, "total_tokens": 450},
+            },
+        )
 
 
 @pytest.fixture(scope="module")
@@ -149,7 +155,8 @@ async def test_success_stores_usage_and_cost_and_masks_pii(client, use_openai):
     assert res.status_code == 201, res.text
     body = res.json()
     assert body["provider"] == "openai" and body["model"] == "gpt-4o-mini-2024-07-18"
-    assert body["summary"] == GOOD_INSIGHT["summary"]
+    assert body["summary"] == GOOD_INSIGHT["summary"] and body["root_cause"] == GOOD_INSIGHT["root_cause"]
+    assert body["prompt_version"] == "copilot-v2" and body["draft_status"] == "pending"
     u = body["usage"]
     assert (u["prompt_tokens"], u["completion_tokens"], u["total_tokens"]) == (300, 150, 450)
     assert u["estimated_cost_usd"] == pytest.approx((300 * 0.15 + 150 * 0.60) / 1e6)
@@ -167,6 +174,7 @@ async def test_success_stores_usage_and_cost_and_masks_pii(client, use_openai):
         ("quota", 429, "llm_quota_exceeded", "quota exhausted"),
         ("missing", 502, "llm_model_not_found", "was not found"),
         ("slow", 504, "llm_timeout", "did not respond within 0.5 s"),
+        ("malformed", 502, "llm_invalid_output", "malformed"),
     ],
 )
 async def test_openai_failures_return_clear_errors(client, use_openai, model, status, code, phrase):

@@ -1,15 +1,15 @@
-import { AlertTriangle, ArrowLeft, Bot, Check, ClipboardCopy, FileText, ListChecks, RefreshCw, Route, ShieldQuestion, Sparkles, UserRound, Users } from "lucide-react";
-import { useState } from "react";
+import { ArrowLeft, Check, FileText, Route, ShieldQuestion, Sparkles, UserRound, Users } from "lucide-react";
 import { Link, useParams } from "react-router-dom";
 import { ApiError } from "@/api/http";
-import { useCategories, useDraftResponse, useTicket, useUpdateTicket } from "@/api/client";
-import type { Analysis, TicketDetail } from "@/api/types";
+import { useCategories, useTicket, useUpdateTicket } from "@/api/client";
+import type { TicketDetail } from "@/api/types";
 import { PriorityBadge, StatusBadge } from "@/components/Badges";
 import { ActionBar } from "@/components/ticket/ActionBar";
+import { CopilotPanel } from "@/components/ticket/CopilotPanel";
 import { Conversation } from "@/components/ticket/Conversation";
 import { Timeline } from "@/components/ticket/Timeline";
 import { TriageView } from "@/components/TriageView";
-import { Avatar, Badge, Button, Card, CardHeader, EmptyState, ErrorState, LoadingState, Select, Skeleton } from "@/components/ui";
+import { Avatar, Badge, Button, Card, CardHeader, EmptyState, ErrorState, LoadingState, Select } from "@/components/ui";
 import { fmtDate, fmtDateTime, fmtInr, fmtRelative } from "@/lib/format";
 
 export function TicketDetailPage() {
@@ -236,96 +236,6 @@ function CategoryCorrection({ ticket }: { ticket: TicketDetail }) {
         {categories.data?.map((c) => <option key={c.name}>{c.name}</option>)}
       </Select>
       {update.isError && <span className="text-rose-600">{update.error.message}</span>}
-    </div>
-  );
-}
-
-function CopilotPanel({ ticket }: { ticket: TicketDetail }) {
-  const generate = useDraftResponse(ticket.id);
-  const [copied, setCopied] = useState(false);
-  const insight = ticket.copilot;
-
-  return (
-    <Card>
-      <CardHeader
-        title="AI copilot"
-        icon={<Bot className="h-4 w-4 text-violet-500" />}
-        subtitle={insight ? insightSubtitle(insight) : "Summary, key issues and recommended actions from the LLM"}
-        actions={
-          <Button size="sm" variant={insight ? "secondary" : "primary"} loading={generate.isPending} onClick={() => generate.mutate()}
-            icon={insight ? <RefreshCw className="h-3.5 w-3.5" /> : <Sparkles className="h-3.5 w-3.5" />}>
-            {insight ? "Regenerate" : "Run copilot"}
-          </Button>
-        }
-      />
-      <div className="p-4">
-        {generate.isError && <InsightError error={generate.error} />}
-        {generate.isPending && !insight ? (
-          <div className="space-y-2"><Skeleton className="h-4 w-3/4" /><Skeleton className="h-4 w-1/2" /><Skeleton className="h-16" /></div>
-        ) : !insight ? (
-          <EmptyState title="No copilot output yet" description="Personal data is masked before the complaint is sent to the model." icon={<Bot className="h-6 w-6" />} />
-        ) : (
-          <div className="space-y-4 text-sm">
-            <section>
-              <h4 className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Summary</h4>
-              <p className="leading-relaxed text-slate-800">{insight.summary}</p>
-            </section>
-            <section>
-              <h4 className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Key issues</h4>
-              <div className="flex flex-wrap gap-1.5">{(insight.key_issues ?? []).map((k) => <Badge key={k} tone="amber">{k}</Badge>)}</div>
-            </section>
-            <section>
-              <h4 className="mb-1 flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-slate-500"><ListChecks className="h-3.5 w-3.5" /> Recommended actions</h4>
-              <ol className="list-decimal space-y-1 pl-5 text-slate-800">{(insight.recommendations ?? []).map((a) => <li key={a}>{a}</li>)}</ol>
-            </section>
-            <section>
-              <div className="mb-1 flex items-center justify-between">
-                <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-500">Suggested reply (draft — review before sending)</h4>
-                <button className="flex items-center gap-1 text-xs text-brand-600 hover:underline"
-                  onClick={() => { void navigator.clipboard?.writeText(insight.draft_response ?? ""); setCopied(true); setTimeout(() => setCopied(false), 1500); }}>
-                  {copied ? <Check className="h-3.5 w-3.5" /> : <ClipboardCopy className="h-3.5 w-3.5" />} {copied ? "Copied" : "Copy"}
-                </button>
-              </div>
-              <p className="whitespace-pre-wrap rounded-md border border-slate-200 bg-slate-50 p-3 leading-relaxed text-slate-700">{insight.draft_response}</p>
-            </section>
-          </div>
-        )}
-      </div>
-    </Card>
-  );
-}
-
-function insightSubtitle(insight: Analysis): string {
-  const parts = [insight.provider === "openai" ? "OpenAI" : "Mock LLM", insight.model ?? "", insight.prompt_version ?? "", fmtRelative(insight.created_at)];
-  if (insight.usage) {
-    parts.push(`${insight.usage.total_tokens.toLocaleString()} tokens`, `~$${insight.usage.estimated_cost_usd.toFixed(4)}`);
-  }
-  return parts.join(" · ");
-}
-
-const ERROR_TITLES: Record<string, string> = {
-  llm_auth_failed: "OpenAI API key rejected",
-  llm_not_configured: "OpenAI is not configured",
-  llm_rate_limited: "OpenAI rate limit reached",
-  llm_quota_exceeded: "OpenAI quota exhausted",
-  llm_timeout: "OpenAI timed out",
-  llm_unreachable: "Can't reach OpenAI",
-  llm_model_not_found: "OpenAI model not found",
-  network_error: "Backend unreachable",
-};
-
-/** Clear, non-crashing message for a failed copilot request. The previous output (if any) stays visible. */
-function InsightError({ error }: { error: Error }) {
-  const api = error instanceof ApiError ? error : undefined;
-  const title = (api?.code && ERROR_TITLES[api.code]) || "Couldn't generate insights";
-  return (
-    <div className="mb-4 flex gap-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2.5 text-sm" role="alert">
-      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-rose-600" aria-hidden />
-      <div>
-        <p className="font-medium text-rose-800">{title}</p>
-        <p className="text-rose-700">{error.message}</p>
-        {api?.retryAfter && <p className="mt-0.5 text-xs text-rose-600">You can retry in {api.retryAfter} s.</p>}
-      </div>
     </div>
   );
 }

@@ -20,7 +20,6 @@ from fastapi import HTTPException, UploadFile, status
 from sqlalchemy import ColumnElement, false, or_, true
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.ai.llm import PROMPT_VERSION, generate_insight
 from app.ai.priority import BASE_PRIORITY, decide_priority
 from app.ai.triage import TriageResult, triage
 from app.domain.lifecycle import (
@@ -173,7 +172,7 @@ async def _load_for_change(db: AsyncSession, user: User, ticket_id: int, action:
     return t
 
 
-def _event(db: AsyncSession, t: Ticket, event_type: str, actor: User | None, **metadata: Any) -> None:
+def record_event(db: AsyncSession, t: Ticket, event_type: str, actor: User | None, **metadata: Any) -> None:
     repo.add_event(db, t.id, event_type, actor.id if actor else None, metadata)
 
 
@@ -181,10 +180,11 @@ def _status_change(db: AsyncSession, t: Ticket, new: Status, actor: User | None,
     old = t.status
     t.status = new.value
     t.updated_at = _now()
-    _event(db, t, "status_changed", actor, **{"from": old, "to": new.value, "action": action.value, **meta})
+    record_event(db, t, "status_changed", actor, **{"from": old, "to": new.value, "action": action.value, **meta})
 
 
-async def _done(db: AsyncSession) -> None:
+async def commit(db: AsyncSession) -> None:
+    """Commit a ticket change (with its events and audit rows) and invalidate the cached analytics."""
     await db.commit()
     await invalidate_cache()
 
@@ -259,11 +259,11 @@ async def create_ticket(db: AsyncSession, user: User, data: TicketCreate) -> Tic
         created_by_id=user.id,
     )
     await repo.add(db, t)
-    _event(db, t, "created", user, channel=t.channel)
+    record_event(db, t, "created", user, channel=t.channel)
     apply_triage(t, result)
     await repo.add_analysis(db, triage_analysis(t, result.top_categories))
     t.status = next_status(t.status, Action.TRIAGE).value
-    _event(
+    record_event(
         db,
         t,
         "triaged",
@@ -278,7 +278,7 @@ async def create_ticket(db: AsyncSession, user: User, data: TicketCreate) -> Tic
     )
     # Rules, not the LLM: category -> owning team -> least-busy agent (or the review queue). Same transaction.
     await routing.route(db, t, trigger="triage")
-    await _done(db)
+    await commit(db)
     return await get_ticket(db, user, t.id)
 
 
@@ -361,6 +361,7 @@ def _historical_timeline(t: Ticket) -> list[dict[str, Any]]:
 
 
 def latest_copilot(t: Ticket) -> AIAnalysis | None:
+    """The newest copilot run (whatever its review status) — the one the workspace shows."""
     return next((a for a in t.analyses if a.kind == "copilot"), None)
 
 
@@ -380,7 +381,7 @@ async def assign(db: AsyncSession, user: User, ticket_id: int, assignee_id: int,
     if target.team_id is not None:
         t.team_id = target.team_id
     await routing_repo.mark_assigned(db, target.id, _now())
-    _event(
+    record_event(
         db,
         t,
         "assigned",
@@ -409,7 +410,7 @@ async def assign(db: AsyncSession, user: User, ticket_id: int, assignee_id: int,
                 "to_team": t.team_id,
             },
         )
-    await _done(db)
+    await commit(db)
     return await get_ticket(db, user, t.id)
 
 
@@ -428,7 +429,7 @@ async def change_status(db: AsyncSession, user: User, ticket_id: int, target: st
         raise _conflict(f"Can't move a ticket from {current.status} to {target}.")
     t = await _load_for_change(db, user, ticket_id, action)
     _status_change(db, t, _transition(t, action), user, action)
-    await _done(db)
+    await commit(db)
     return await get_ticket(db, user, t.id)
 
 
@@ -443,7 +444,7 @@ async def escalate(db: AsyncSession, user: User | None, ticket_id: int, reason: 
     new_status = _transition(t, Action.ESCALATE)
     t.escalated_at = _now()
     _status_change(db, t, new_status, user, Action.ESCALATE, reason=reason, auto=auto)
-    _event(db, t, "escalated", user, reason=reason, auto=auto)
+    record_event(db, t, "escalated", user, reason=reason, auto=auto)
     users_repo.audit(
         db,
         "ticket.escalate",
@@ -452,7 +453,7 @@ async def escalate(db: AsyncSession, user: User | None, ticket_id: int, reason: 
         resource_id=t.id,
         metadata={"ticket": t.ticket_number, "reason": reason, "auto": auto},
     )
-    await _done(db)
+    await commit(db)
     return t if user is None else await get_ticket(db, user, t.id)
 
 
@@ -461,7 +462,7 @@ async def resolve(db: AsyncSession, user: User, ticket_id: int, resolution: str)
     new_status = _transition(t, Action.RESOLVE)
     t.resolution, t.resolved_at = resolution, _now()
     _status_change(db, t, new_status, user, Action.RESOLVE, resolution=resolution)
-    await _done(db)
+    await commit(db)
     return await get_ticket(db, user, t.id)
 
 
@@ -479,7 +480,7 @@ async def close(db: AsyncSession, user: User, ticket_id: int) -> Ticket:
             resource_id=t.id,
             metadata={"ticket": t.ticket_number, "assignee_id": t.assignee_id},
         )
-    await _done(db)
+    await commit(db)
     return await get_ticket(db, user, t.id)
 
 
@@ -497,7 +498,7 @@ async def reopen(db: AsyncSession, user: User, ticket_id: int, reason: str) -> T
         resource_id=t.id,
         metadata={"ticket": t.ticket_number, "reason": reason, "reopen_count": t.reopen_count},
     )
-    await _done(db)
+    await commit(db)
     return await get_ticket(db, user, t.id)
 
 
@@ -534,7 +535,7 @@ async def correct_category(db: AsyncSession, user: User, ticket_id: int, categor
     t.category, t.category_confidence, t.needs_review, t.labels_from = category, 1.0, False, "human"
     t.updated_at = _now()
     if confirming:
-        _event(db, t, "category_confirmed", user, category=category, model_confidence=confidence)
+        record_event(db, t, "category_confirmed", user, category=category, model_confidence=confidence)
     else:
         decision = decide_priority(
             t.category,
@@ -549,7 +550,7 @@ async def correct_category(db: AsyncSession, user: User, ticket_id: int, categor
             {"rule": "BASE", "reason": f"Base priority for {t.category}", "from": "", "to": decision.base},
             *decision.reasons,
         ]
-        _event(
+        record_event(
             db,
             t,
             "category_corrected",
@@ -559,7 +560,7 @@ async def correct_category(db: AsyncSession, user: User, ticket_id: int, categor
     await routing.reroute_after_category_change(
         db, t, actor=user, trigger="category_confirmed" if confirming else "category_corrected"
     )
-    await _done(db)
+    await commit(db)
     return t
 
 
@@ -578,23 +579,32 @@ async def auto_assign(db: AsyncSession, user: User, ticket_id: int) -> Ticket:
         )
         raise _conflict(why, "not_routable")
     await routing.route(db, t, actor=user, trigger="manual")
-    await _done(db)
+    await commit(db)
     return await get_ticket(db, user, t.id)
 
 
 # ------------------------------------------------------------------------------------------------ comments & files
-async def add_comment(
-    db: AsyncSession, user: User, ticket_id: int, body: str, *, ai_assisted: bool = False
+async def insert_comment(
+    db: AsyncSession, user: User, t: Ticket, body: str, *, ai_assisted: bool = False, **meta: Any
 ) -> TicketComment:
-    t = await get_ticket(db, user, ticket_id)
+    """Add a comment and its timeline event to the session (the caller commits). The first comment on a ticket is
+    its first response."""
     comment = TicketComment(ticket_id=t.id, author_id=user.id, body=body, ai_assisted=ai_assisted)
     db.add(comment)
     if t.first_response_at is None:
         t.first_response_at = _now()
     t.updated_at = _now()
     await db.flush()
-    _event(db, t, "comment_added", user, comment_id=comment.id, ai_assisted=ai_assisted)
-    await _done(db)
+    record_event(db, t, "comment_added", user, comment_id=comment.id, ai_assisted=ai_assisted, **meta)
+    return comment
+
+
+async def add_comment(
+    db: AsyncSession, user: User, ticket_id: int, body: str, *, ai_assisted: bool = False
+) -> TicketComment:
+    t = await get_ticket(db, user, ticket_id)
+    comment = await insert_comment(db, user, t, body, ai_assisted=ai_assisted)
+    await commit(db)
     await db.refresh(comment, ["author"])
     return comment
 
@@ -615,8 +625,8 @@ async def add_attachment(db: AsyncSession, user: User, ticket_id: int, upload: U
         db.add(att)
         t.updated_at = _now()
         await db.flush()
-        _event(db, t, "attachment_added", user, attachment_id=att.id, filename=att.filename, size=att.size_bytes)
-        await _done(db)
+        record_event(db, t, "attachment_added", user, attachment_id=att.id, filename=att.filename, size=att.size_bytes)
+        await commit(db)
     except BaseException:
         storage.delete(stored.storage_key)
         raise
@@ -630,49 +640,6 @@ async def get_attachment(db: AsyncSession, user: User, ticket_id: int, attachmen
     if att is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Attachment not found")
     return att
-
-
-# ------------------------------------------------------------------------------------------------ copilot
-async def generate_copilot(db: AsyncSession, user: User, ticket_id: int) -> AIAnalysis:
-    """Ask the LLM for a summary, key issues, recommendations and a draft response (PII masked first)."""
-    t = await get_ticket(db, user, ticket_id)
-    context = {
-        "category": t.category,
-        "intent": t.intent,
-        "sentiment": t.sentiment,
-        "priority": t.priority,
-        "channel": t.channel,
-        "product": t.product,
-        "amount_inr": t.amount_inr,
-        "entities": t.entities,
-    }
-    # The OpenAI SDK call is blocking; run it in a worker thread.
-    run = await asyncio.to_thread(
-        generate_insight, t.description, context, [t.customer_name] if t.customer_name else None
-    )
-    analysis = triage_analysis(t)
-    analysis.kind = "copilot"
-    analysis.summary = run.insight.summary
-    analysis.key_issues = run.insight.key_issues
-    analysis.recommendations = run.insight.recommended_actions
-    analysis.draft_response = run.insight.customer_reply
-    analysis.provider = run.provider
-    analysis.model = (run.usage or {}).get("model") or run.model
-    analysis.prompt_version = PROMPT_VERSION
-    analysis.usage = run.usage
-    await repo.add_analysis(db, analysis)
-    _event(
-        db,
-        t,
-        "copilot_generated",
-        user,
-        analysis_id=analysis.id,
-        provider=analysis.provider,
-        prompt_version=PROMPT_VERSION,
-    )
-    await db.commit()
-    await db.refresh(t, ["analyses"])
-    return analysis
 
 
 OPEN_STATUS_VALUES = sorted(s.value for s in OPEN_STATUSES)

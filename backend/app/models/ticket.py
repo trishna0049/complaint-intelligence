@@ -145,6 +145,7 @@ class AIAnalysis(Base):
     alternatives: Mapped[list[list[Any]] | None] = mapped_column(JSONB)
     # copilot output (None for kind="triage")
     summary: Mapped[str | None] = mapped_column(Text)
+    root_cause: Mapped[str | None] = mapped_column(Text)  # the model's hypothesis, shown as "likely root cause"
     key_issues: Mapped[list[str] | None] = mapped_column(JSONB)
     recommendations: Mapped[list[str] | None] = mapped_column(JSONB)
     draft_response: Mapped[str | None] = mapped_column(Text)
@@ -154,9 +155,19 @@ class AIAnalysis(Base):
     prompt_version: Mapped[str | None] = mapped_column(String(16))
     # Token usage and estimated cost for real LLM calls (None for the mock provider).
     usage: Mapped[dict[str, Any] | None] = mapped_column(JSONB(none_as_null=True))
+    # Human review of the draft reply (copilot only): pending -> accepted | discarded, or superseded by a newer run.
+    # The AI never sends anything: "accepted" means an agent posted the (possibly edited) text as a comment.
+    draft_status: Mapped[str | None] = mapped_column(String(12))
+    reviewed_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    final_response: Mapped[str | None] = mapped_column(Text)  # what the agent actually posted
+    edited: Mapped[bool | None] = mapped_column(Boolean)
+    comment_id: Mapped[int | None] = mapped_column(ForeignKey("ticket_comments.id", ondelete="SET NULL"))
+    discard_reason: Mapped[str | None] = mapped_column(String(500))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     ticket: Mapped[Ticket] = relationship(back_populates="analyses")
+    reviewed_by: Mapped[User | None] = relationship(lazy="joined")
 
 
 class TicketComment(Base):

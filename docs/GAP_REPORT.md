@@ -33,7 +33,7 @@ Other differences: routes under `/api/` not `/api/v1/`; `complaints` instead of 
 | 3 | Auth and roles | ✅ Done (also added `audit_logs` and the `categories` table with owning team, needed by steps 4–5) |
 | 4 | Full ticket lifecycle | ✅ Done (8 states, 9 actions, comments, attachments, timeline, audit, customers + previous tickets, agent scoping, My work page) |
 | 5 | Routing | ✅ Done (rules: review → no team → no agents → capacity → least busy; advisory lock; review queue; re-route on category fix; Admin auto-assign) — runs in the request until step 8 moves it to the AI worker |
-| 6 | Copilot completion | ⏳ Not started |
+| 6 | Copilot completion | ✅ Done (root cause, prompt `copilot-v2`, conversation context, accept edited/as-is → AI-assisted comment, regenerate supersedes, discard with reason) — RAG grounding comes with step 7 |
 | 7 | Retrieval (embeddings, KB, RAG) | ⏳ Not started |
 | 8 | Events (Kafka, outbox, workers, DLQ) | ⏳ Not started |
 | 9 | SLA engine | ⏳ Not started |
