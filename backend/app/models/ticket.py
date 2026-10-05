@@ -103,11 +103,25 @@ class Ticket(Base):
     customer: Mapped[Customer | None] = relationship(lazy="joined")
     created_by: Mapped[User | None] = relationship(foreign_keys=[created_by_id], lazy="noload")
 
+    @property
+    def top_categories(self) -> list[list[Any]]:
+        """The latest triage run's alternatives (review queue / category correction)."""
+        latest = next((a for a in self.analyses if a.kind == "triage"), None)
+        return (latest.alternatives or []) if latest else []
+
     __table_args__ = (
         Index("ix_tickets_created_category", "created_at", "category"),
         Index("ix_tickets_assignee_status", "assignee_id", "status"),
         Index("ix_tickets_team_status", "team_id", "status"),
         Index("ix_tickets_created_by_id", "created_by_id"),
+        Index(
+            "ix_tickets_review_queue",
+            "created_at",
+            postgresql_where=text(
+                "needs_review AND status IN "
+                "('NEW', 'TRIAGED', 'ASSIGNED', 'IN_PROGRESS', 'WAITING_CUSTOMER', 'ESCALATED')"
+            ),
+        ),
     )
 
 
@@ -127,6 +141,8 @@ class AIAnalysis(Base):
     priority: Mapped[str | None] = mapped_column(String(16))
     entities: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     confidence: Mapped[float | None] = mapped_column(Float)
+    # The classifier's top categories with their probabilities, e.g. [["Refund Related", 0.41], ["Returns", 0.32]].
+    alternatives: Mapped[list[list[Any]] | None] = mapped_column(JSONB)
     # copilot output (None for kind="triage")
     summary: Mapped[str | None] = mapped_column(Text)
     key_issues: Mapped[list[str] | None] = mapped_column(JSONB)

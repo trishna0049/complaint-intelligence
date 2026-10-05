@@ -11,8 +11,8 @@ and committed locally before the next one starts.
 | 2 | API alignment — `/api/v1`, tickets, `INC-` numbers, `/analytics/*` | ✅ |
 | 3 | Auth and roles — JWT + rotating refresh tokens, argon2, ADMIN/AGENT guards, admin screens | ✅ |
 | 4 | Full ticket lifecycle — 8 states, assign/escalate/resolve/close/reopen, comments, attachments, timeline, audit | ✅ |
-| 5 | Routing — category → team → least-busy agent; low-confidence review queue | ⏳ next |
-| 6 | Copilot completion — root cause, prompt_version, accept / regenerate / discard | ⏳ |
+| 5 | Routing — category → team → least-busy agent; low-confidence review queue | ✅ |
+| 6 | Copilot completion — root cause, prompt_version, accept / regenerate / discard | ⏳ next |
 | 7 | Retrieval — MiniLM embeddings, HNSW, hybrid search, similar tickets, knowledge base, RAG | ⏳ |
 | 8 | Events — Kafka (KRaft) + UI, outbox relay, 4 workers, idempotency, retries, DLQ + replay | ⏳ |
 | 9 | SLA engine — policies, pause rule, warning/breach once, auto-escalation, live badge, demo speed-up | ⏳ |
@@ -42,8 +42,11 @@ and committed locally before the next one starts.
   `ticket_events` row (timeline) — and `audit_logs` for reassign / escalate / close-other / reopen — in the same
   transaction. Agents see own + team + created tickets (others → 404). Imported history is `CLOSED`, linked to its
   dataset agent and the category's team.
-- New tickets are triaged on create (NEW → TRIAGED) but **not yet routed** (team/assignee empty) — that's step 5.
-- Next: step 5 (routing: category → team → least-busy agent, low-confidence review queue).
+- Routing (rules, [docs/ROUTING_RULES.md](docs/ROUTING_RULES.md)): on create, after triage, in the same transaction —
+  category → owning team → least-busy active agent (per-team advisory lock); low confidence → Admin **Review queue**
+  (`/review`); confirming/correcting the category routes untouched tickets; Admin "Auto-assign". Triage + routing
+  still run inside the request — step 8 moves them to the Kafka AI worker.
+- Next: step 6 (copilot completion: root cause, prompt_version, accept / regenerate / discard).
 
 ## Step log
 
@@ -128,3 +131,31 @@ and committed locally before the next one starts.
   event + audit, visibility and assignment/close permissions, comments, attachments, customers, filters), 28
   frontend (8 new lifecycle UI tests), Playwright e2e now walks assign → start → comment + attachment → resolve →
   close and checks the timeline.
+
+### Step 5 — Routing ✅
+- `app/domain/routing.py` (pure): REVIEW (confidence < 0.45) → NO_TEAM → NO_AGENTS → AT_CAPACITY
+  (`ROUTING_MAX_OPEN_PER_AGENT`, 25) → LEAST_BUSY (fewest open tickets; ties: never assigned, then least recently
+  assigned, then lowest id → round-robin on equal load). Documented in docs/ROUTING_RULES.md.
+- `app/services/routing.py` applies a decision in the caller's transaction: assignee/team, lifecycle move,
+  `routed` timeline event (rule, reason, team, agent, load, candidates), `ticket.reroute` audit when a ticket is
+  taken from someone. A per-team `pg_advisory_xact_lock` stops two simultaneous tickets picking the same agent
+  (the concurrency test fails without it — checked by disabling the lock).
+- Migration `0005`: `users.last_assigned_at`, `ai_analyses.alternatives` (top categories), partial index for the
+  review queue. Round-trip and `alembic check` clean. Lifecycle gains a system-only `release` move
+  (ASSIGNED → TRIAGED) for a category fix that sends an untouched ticket to a team with no free agent.
+- Runs on create, after a category is confirmed (same value on a flagged ticket) or corrected (only while nobody has
+  started: TRIAGED unassigned, or ASSIGNED outside the new team — in-progress tickets keep their owner), and on
+  Admin `POST /tickets/{id}/auto-assign`.
+- Bug found by a test and fixed: an agent whose category fix routed the ticket to another team got a 404 for their
+  own successful change. The response now carries the result with `can_view: false`, and the UI shows "INC-… moved
+  to Returns & Pickups" instead of an error.
+- Frontend: Admin **Review queue** page (AI suggestion + confidence, top alternatives as one-click choices, other
+  category, "Just reviewed" list showing where each went), confirm/alternatives on the ticket page, routing reason in
+  the Assignment card, timeline wording for routing (rules vs a person's step), Admin "Auto-assign" action.
+- Checked by hand on the full dataset: a delayed-order complaint → Order Support, least busy of 259 agents; two
+  ambiguous complaints (40%, 39%) → review queue with sensible alternatives; confirming one routed it to Refunds Desk
+  (57 agents). Fixed while checking: the timeline credited the Admin with the rules' moves after a confirmation.
+- Tests: 184 backend (27 new: every rule and tie-break, least-busy across loads, inactive/admin skipped,
+  round-robin, concurrency, capacity, team queue, unrouted, review → confirm, correction moves/releases/keeps owner,
+  auto-assign permissions and 409s, manual assignment counts for round-robin), 35 frontend (7 new), Playwright e2e
+  checks the routing decision and a manual reassignment.

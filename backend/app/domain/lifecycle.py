@@ -6,6 +6,7 @@
 
     escalate: TRIAGED, ASSIGNED, IN_PROGRESS, WAITING_CUSTOMER → ESCALATED → start / assign / resolve
     assign (or reassign): any open state → ASSIGNED;   resolve: ASSIGNED, IN_PROGRESS, WAITING_CUSTOMER, ESCALATED
+    release (system, routing only): ASSIGNED → TRIAGED when a category fix moves an untouched ticket to a team queue
 
 Every action names the states it may start from and the state it leads to. Anything else is rejected with
 `InvalidTransition`, which the API turns into HTTP 409. Permissions (who may do it) are checked separately in the
@@ -40,6 +41,7 @@ SLA_PAUSED_STATUSES = frozenset({Status.WAITING_CUSTOMER})
 class Action(StrEnum):
     TRIAGE = "triage"  # system: AI triage finished
     ASSIGN = "assign"  # assign or reassign to an agent
+    RELEASE = "release"  # system: routing moved the ticket to another team's queue before work started
     START = "start"  # agent starts working
     WAIT_CUSTOMER = "wait_customer"  # waiting for the customer's reply (SLA paused)
     RESUME = "resume"  # customer replied / work continues
@@ -66,6 +68,7 @@ TRANSITIONS: dict[Action, Transition] = {
     for t in (
         Transition(Action.TRIAGE, frozenset({Status.NEW}), Status.TRIAGED, "Triage complete"),
         Transition(Action.ASSIGN, _ASSIGNABLE, Status.ASSIGNED, "Assign"),
+        Transition(Action.RELEASE, frozenset({Status.ASSIGNED}), Status.TRIAGED, "Back to the team queue"),
         Transition(Action.START, frozenset({Status.ASSIGNED, Status.ESCALATED}), Status.IN_PROGRESS, "Start work"),
         Transition(Action.WAIT_CUSTOMER, frozenset({Status.IN_PROGRESS}), Status.WAITING_CUSTOMER, "Wait on customer"),
         Transition(Action.RESUME, frozenset({Status.WAITING_CUSTOMER}), Status.IN_PROGRESS, "Customer replied"),
@@ -85,6 +88,10 @@ TRANSITIONS: dict[Action, Transition] = {
         Transition(Action.REOPEN, frozenset({Status.RESOLVED, Status.CLOSED}), None, "Reopen"),
     )
 }
+
+
+# Taken by the system (triage, routing), never offered to users.
+SYSTEM_ACTIONS = frozenset({Action.TRIAGE, Action.RELEASE})
 
 
 class InvalidTransition(Exception):
@@ -114,7 +121,7 @@ def next_status(current: Status | str, action: Action | str, *, has_assignee: bo
 def allowed_actions(current: Status | str) -> list[Action]:
     """Every action that is legal from `current` (before permission checks)."""
     current = Status(current)
-    return [a for a, t in TRANSITIONS.items() if current in t.sources and a is not Action.TRIAGE]
+    return [a for a, t in TRANSITIONS.items() if current in t.sources and a not in SYSTEM_ACTIONS]
 
 
 def is_open(status: Status | str) -> bool:

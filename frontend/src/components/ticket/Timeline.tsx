@@ -1,4 +1,4 @@
-import { ArrowUpCircle, Bot, CheckCircle2, Clock, FilePlus2, History, MessageSquare, PencilLine, PlusCircle, Sparkles, UserPlus } from "lucide-react";
+import { ArrowUpCircle, Bot, CheckCircle2, Clock, FilePlus2, History, Inbox, MessageSquare, PencilLine, PlusCircle, Route, ShieldQuestion, Sparkles, UserPlus } from "lucide-react";
 import type { ReactNode } from "react";
 import type { TimelineEvent } from "@/api/types";
 import { Card, CardHeader } from "@/components/ui";
@@ -9,7 +9,9 @@ const str = (v: unknown) => (v === null || v === undefined ? "" : String(v));
 
 function describe(e: TimelineEvent): { icon: ReactNode; text: ReactNode; detail?: string } {
   const m = e.metadata ?? {};
-  const who = e.actor?.name ?? (e.event_type === "triaged" ? "AI triage" : "System");
+  // Moves made by the routing rules carry a trigger; only an Admin's "Auto-assign" (trigger "manual") is a person's.
+  const byRules = (e.event_type === "routed" || !!m.trigger) && m.trigger !== "manual";
+  const who = byRules ? "Routing rules" : e.actor?.name ?? (e.event_type === "triaged" ? "AI triage" : "System");
   switch (e.event_type) {
     case "created":
       return { icon: <PlusCircle className="h-3.5 w-3.5" />, text: <>{m.historical ? "Contact received" : <><b>{who}</b> created the ticket</>} via {str(m.channel)}</> };
@@ -42,6 +44,22 @@ function describe(e: TimelineEvent): { icon: ReactNode; text: ReactNode; detail?
       return { icon: <MessageSquare className="h-3.5 w-3.5" />, text: <><b>{who}</b> {m.ai_assisted ? "posted the AI-drafted reply" : "commented"}</> };
     case "attachment_added":
       return { icon: <FilePlus2 className="h-3.5 w-3.5" />, text: <><b>{who}</b> attached {str(m.filename)}</> };
+    case "routed": {
+      const by = byRules ? <><b>Routing rules</b>: </> : <><b>{who}</b> re-ran routing: </>;
+      const reason = str(m.reason);
+      switch (m.outcome) {
+        case "assigned":
+          return { icon: <Route className="h-3.5 w-3.5 text-brand-600" />, text: <>{by}assigned to <b>{str(m.assignee)}</b> in {str(m.team)}</>, detail: reason };
+        case "team_queue":
+          return { icon: <Inbox className="h-3.5 w-3.5 text-amber-600" />, text: <>{by}queued for <b>{str(m.team)}</b></>, detail: reason };
+        case "review":
+          return { icon: <ShieldQuestion className="h-3.5 w-3.5 text-violet-500" />, text: <>{by}waiting for a category review</>, detail: reason };
+        default:
+          return { icon: <Route className="h-3.5 w-3.5" />, text: <>{by}not routed</>, detail: reason };
+      }
+    }
+    case "category_confirmed":
+      return { icon: <CheckCircle2 className="h-3.5 w-3.5 text-violet-500" />, text: <><b>{who}</b> confirmed the AI category <b>{str(m.category)}</b></> };
     case "category_corrected":
       return {
         icon: <PencilLine className="h-3.5 w-3.5" />,

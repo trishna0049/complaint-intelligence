@@ -106,7 +106,8 @@ async def test_category_correction_recomputes_priority(client):
     body = res.json()
     assert body["category"] == "Refund Related" and body["labels_from"] == "human" and body["needs_review"] is False
     assert body["priority"] in ("High", "Critical")  # Refund base priority is High
-    assert body["timeline"][-1]["event_type"] == "category_corrected"
+    kinds = [e["event_type"] for e in body["timeline"]]
+    assert kinds[-2:] == ["category_corrected", "routed"]  # a ticket nobody has started on follows its new category
     assert (await client.patch(f"/api/v1/tickets/{tid}", json={"category": "Nope"})).status_code == 422
     assert (await client.get("/api/v1/tickets/9999")).status_code == 404
 

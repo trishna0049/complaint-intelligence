@@ -11,6 +11,7 @@ import { DashboardPage } from "@/pages/DashboardPage";
 import { LoginPage } from "@/pages/LoginPage";
 import { MyWorkPage } from "@/pages/MyWorkPage";
 import { NewTicketPage } from "@/pages/NewTicketPage";
+import { ReviewQueuePage } from "@/pages/ReviewQueuePage";
 import { TicketDetailPage } from "@/pages/TicketDetailPage";
 import { TicketsPage } from "@/pages/TicketsPage";
 
@@ -38,6 +39,9 @@ export default function App() {
           <Route path="tickets" element={<TicketsPage />} />
           <Route path="tickets/new" element={<NewTicketPage />} />
           <Route path="tickets/:id" element={<TicketDetailPage />} />
+          <Route path="review" element={<RequireRole role="ADMIN" />}>
+            <Route index element={<ReviewQueuePage />} />
+          </Route>
           <Route path="complaints" element={<Navigate to="/tickets" replace />} />
           <Route path="complaints/:id" element={<LegacyComplaintRedirect />} />
           <Route path="admin" element={<RequireRole role="ADMIN" />}>

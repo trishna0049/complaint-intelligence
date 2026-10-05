@@ -1,7 +1,7 @@
-import { ArrowUpCircle, CheckCircle2, Clock, Lock, Play, RotateCcw, UserPlus } from "lucide-react";
+import { ArrowUpCircle, CheckCircle2, Clock, Lock, Play, RotateCcw, Shuffle, UserPlus } from "lucide-react";
 import { useState, type FormEvent, type ReactNode } from "react";
 import { ApiError } from "@/api/http";
-import { useAssign, useClose, useEscalate, useReopen, useResolve, useTeamMembers, useTeams, useUpdateTicket } from "@/api/client";
+import { useAssign, useAutoAssign, useClose, useEscalate, useReopen, useResolve, useTeamMembers, useTeams, useUpdateTicket } from "@/api/client";
 import type { TicketAction, TicketDetail } from "@/api/types";
 import { useAuth } from "@/auth/useAuth";
 import { Avatar, Badge, Button, Field, Modal, Select, Spinner, Textarea } from "@/components/ui";
@@ -9,6 +9,7 @@ import { ACTION_LABELS } from "@/lib/status";
 
 const ICONS: Record<TicketAction, ReactNode> = {
   assign: <UserPlus className="h-4 w-4" />,
+  auto_assign: <Shuffle className="h-4 w-4" />,
   start: <Play className="h-4 w-4" />,
   wait_customer: <Clock className="h-4 w-4" />,
   resume: <Play className="h-4 w-4" />,
@@ -19,7 +20,7 @@ const ICONS: Record<TicketAction, ReactNode> = {
 };
 
 // The order buttons appear in; the most common next step is the primary button.
-const ORDER: TicketAction[] = ["start", "resume", "resolve", "close", "assign", "wait_customer", "escalate", "reopen"];
+const ORDER: TicketAction[] = ["start", "resume", "resolve", "close", "auto_assign", "assign", "wait_customer", "escalate", "reopen"];
 
 function errorMessage(err: unknown): string | null {
   if (!err) return null;
@@ -31,14 +32,16 @@ export function ActionBar({ ticket }: { ticket: TicketDetail }) {
   const [open, setOpen] = useState<TicketAction | null>(null);
   const patch = useUpdateTicket(ticket.id);
   const close = useClose(ticket.id);
+  const autoAssign = useAutoAssign(ticket.id);
   const actions = ORDER.filter((a) => ticket.allowed_actions.includes(a));
   const direct = { start: "IN_PROGRESS", resume: "IN_PROGRESS", wait_customer: "WAITING_CUSTOMER" } as const;
-  const busy = patch.isPending || close.isPending;
-  const error = errorMessage(patch.error ?? close.error);
+  const busy = patch.isPending || close.isPending || autoAssign.isPending;
+  const error = errorMessage(patch.error ?? close.error ?? autoAssign.error);
 
   function run(a: TicketAction) {
     if (a === "start" || a === "resume" || a === "wait_customer") patch.mutate({ status: direct[a] });
     else if (a === "close") close.mutate(undefined);
+    else if (a === "auto_assign") autoAssign.mutate(undefined);
     else setOpen(a);
   }
 

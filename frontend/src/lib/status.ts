@@ -15,6 +15,7 @@ export const statusLabel = (status: Status | string) => LABELS[status as Status]
 
 export const ACTION_LABELS: Record<TicketAction, string> = {
   assign: "Assign",
+  auto_assign: "Auto-assign",
   start: "Start work",
   wait_customer: "Wait on customer",
   resume: "Customer replied",

@@ -3,7 +3,7 @@ export type Status = "NEW" | "TRIAGED" | "ASSIGNED" | "IN_PROGRESS" | "WAITING_C
 export const STATUSES: Status[] = ["NEW", "TRIAGED", "ASSIGNED", "IN_PROGRESS", "WAITING_CUSTOMER", "ESCALATED", "RESOLVED", "CLOSED"];
 export const OPEN_STATUSES: Status[] = ["NEW", "TRIAGED", "ASSIGNED", "IN_PROGRESS", "WAITING_CUSTOMER", "ESCALATED"];
 
-export type TicketAction = "assign" | "start" | "wait_customer" | "resume" | "escalate" | "resolve" | "close" | "reopen";
+export type TicketAction = "assign" | "auto_assign" | "start" | "wait_customer" | "resume" | "escalate" | "resolve" | "close" | "reopen";
 
 export interface UserRef {
   id: number;
@@ -38,6 +38,8 @@ export interface Ticket {
   escalated_at: string | null;
   created_at: string;
   updated_at: string;
+  /** The classifier's top categories from the latest triage run, best first. */
+  top_categories: [string, number][];
 }
 
 export interface Entities {
@@ -153,6 +155,8 @@ export interface TicketDetail extends Ticket {
   timeline: TimelineEvent[];
   previous_tickets: PreviousTicket[];
   allowed_actions: TicketAction[];
+  /** False only in the response to a change that moved the ticket out of the caller's scope. */
+  can_view: boolean;
 }
 
 export interface TicketSummary {

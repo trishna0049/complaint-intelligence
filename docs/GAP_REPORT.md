@@ -32,7 +32,7 @@ Other differences: routes under `/api/` not `/api/v1/`; `complaints` instead of 
 | 2 | API alignment: `/api/v1`, tickets, `INC-`, `/analytics/*` | ✅ Done (`/analytics/sla` and `/workload` arrive with steps 9 and 11, once SLA and assignment data exist) |
 | 3 | Auth and roles | ✅ Done (also added `audit_logs` and the `categories` table with owning team, needed by steps 4–5) |
 | 4 | Full ticket lifecycle | ✅ Done (8 states, 9 actions, comments, attachments, timeline, audit, customers + previous tickets, agent scoping, My work page) |
-| 5 | Routing | ⏳ Not started |
+| 5 | Routing | ✅ Done (rules: review → no team → no agents → capacity → least busy; advisory lock; review queue; re-route on category fix; Admin auto-assign) — runs in the request until step 8 moves it to the AI worker |
 | 6 | Copilot completion | ⏳ Not started |
 | 7 | Retrieval (embeddings, KB, RAG) | ⏳ Not started |
 | 8 | Events (Kafka, outbox, workers, DLQ) | ⏳ Not started |

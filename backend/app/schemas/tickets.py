@@ -105,6 +105,8 @@ class TicketListItem(BaseModel):
     escalated_at: datetime | None
     created_at: datetime
     updated_at: datetime
+    # The classifier's top categories from the latest triage run, e.g. [["Refund Related", 0.41], ...].
+    top_categories: list[tuple[str, float]] = []
 
 
 class AnalysisOut(BaseModel):
@@ -125,6 +127,7 @@ class AnalysisOut(BaseModel):
     model: str | None
     model_version: str | None
     prompt_version: str | None
+    alternatives: list[tuple[str, float]] | None = None
     usage: dict[str, Any] | None = None
     created_at: datetime
 
@@ -208,3 +211,6 @@ class TicketDetail(TicketListItem):
     previous_tickets: list[PreviousTicket] = []
     # Lifecycle actions the current user may perform now (state machine + permissions) — the UI shows only these.
     allowed_actions: list[str] = []
+    # False only in the response to a change that moved the ticket out of the caller's scope (e.g. a category fix
+    # routed it to another team); the next GET returns 404.
+    can_view: bool = True

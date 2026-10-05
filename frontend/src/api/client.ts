@@ -91,6 +91,9 @@ export const useUpdateTicket = (id: number) =>
 export const useAssign = (id: number) =>
   useTicketChange(id, (body: { assignee_id: number; note?: string }) => api<TicketDetail>(`/tickets/${id}/assign`, { method: "POST", body }));
 
+export const useAutoAssign = (id: number) =>
+  useTicketChange(id, () => api<TicketDetail>(`/tickets/${id}/auto-assign`, { method: "POST" }));
+
 export const useEscalate = (id: number) =>
   useTicketChange(id, (reason: string) => api<TicketDetail>(`/tickets/${id}/escalate`, { method: "POST", body: { reason } }));
 

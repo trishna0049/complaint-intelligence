@@ -1,70 +1,85 @@
 # Architecture
 
 One FastAPI service on async SQLAlchemy 2, PostgreSQL 16 (+ pgvector) and Redis in Docker Compose, one React app.
-All AI runs in-process. (This document is rewritten in full as the platform grows; see docs/GAP_REPORT.md.)
+Triage and routing currently run in-process inside the create request; step 8 of the build moves them to Kafka
+workers behind an outbox (see docs/GAP_REPORT.md). This document is rewritten in full as the platform grows.
 
 ```mermaid
 flowchart LR
-    UI["React dashboard<br/>(Vite, Tailwind, React Query, Recharts)"] -- "/api (JSON)" --> API["FastAPI"]
+    UI["React app<br/>(Vite, Tailwind, React Query, Recharts)"] -- "/api/v1 (JSON, Bearer JWT)" --> API["FastAPI"]
+    API --> AUTH["Auth<br/>JWT + rotating refresh cookie, argon2"]
     API --> T["Triage pipeline"]
     T --> C["scikit-learn<br/>category + intent"]
     T --> S["Hugging Face<br/>5-level sentiment"]
     T --> E["Regex entities<br/>₹ amounts, order IDs, dates"]
     T --> P["Priority rules<br/>(raise-only)"]
-    API --> L["Insights (LLM)<br/>OpenAI structured output · Mock"]
+    API --> LC["Lifecycle state machine<br/>(8 states, 409 on illegal moves)"]
+    API --> RT["Routing rules<br/>team → least-busy agent"]
+    API --> L["Copilot (LLM)<br/>OpenAI structured output · Mock"]
     L -. "PII masked first" .-> OAI(("OpenAI API"))
-    API --> DB[("PostgreSQL 16<br/>complaints, ai_insights")]
-    D --> R[("Redis<br/>analytics cache")]
-    API --> D["Dashboard SQL aggregates"]
-    D --> DB
+    API --> DB[("PostgreSQL 16<br/>tickets, ticket_events, users, teams, …")]
+    API --> R[("Redis<br/>analytics cache")]
 ```
 
 ## Request flows
 
-**New complaint** — `POST /api/complaints`
+**New ticket** — `POST /api/v1/tickets` (one transaction)
 
 ```mermaid
 sequenceDiagram
     participant UI
     participant API as FastAPI
     participant AI as Triage pipeline
+    participant RT as Routing rules
     participant DB as PostgreSQL
-    UI->>API: complaint text + optional order/amount/product
-    API->>AI: extract entities → classify category & intent → sentiment → priority rules
-    AI-->>API: labels, confidences, entities, rule trace, model version
-    API->>DB: insert complaint with triage results
-    API-->>UI: complaint + triage (flagged needs_review if confidence < 0.45)
+    UI->>API: complaint text + optional customer/order/amount/product
+    API->>AI: entities → category & intent → sentiment → priority rules
+    AI-->>API: labels, confidences, top categories, entities, rule trace, model version
+    API->>DB: insert ticket (NEW), ai_analyses row, events created + triaged (→ TRIAGED)
+    API->>RT: category → owning team → candidates with open load (per-team advisory lock)
+    RT-->>API: ASSIGNED to least-busy agent · team queue · review queue (low confidence) · unrouted
+    API->>DB: assignee/team, routed + status_changed events, commit
+    API-->>UI: ticket detail (timeline, allowed_actions)
 ```
 
-**AI insights** — `POST /api/complaints/{id}/insights`: the text is PII-masked, sent with its triage context
-to the LLM provider, parsed into the `ComplaintInsight` schema (summary, key issues, recommended actions,
-suggested reply) and stored with provider, model and prompt version.
+**Lifecycle actions** — `POST /tickets/{id}/assign|escalate|resolve|close|reopen`, `PATCH /tickets/{id}`: the ticket
+row is locked, permissions are checked (Admin vs own/team), the move is checked against
+`app/domain/lifecycle.py`, and the change, its `ticket_events` row and (for sensitive actions) its `audit_logs` row
+are committed together.
 
-**Dashboard** — `GET /api/dashboard?days=30`: one endpoint computes KPIs (with change vs the previous period),
-daily volume and sentiment trends, category / intent / channel / priority breakdowns, open high-priority
-complaints, week-over-week emerging issues and plain-English insights, all with SQL `GROUP BY` / `CASE`
-aggregates.
+**Copilot** — `POST /api/v1/ai/draft-response`: the text is PII-masked, sent with its triage context to the LLM
+provider, parsed into a schema (summary, key issues, recommended actions, suggested reply) and stored as an
+`ai_analyses` row with provider, model, prompt version and token cost.
+
+**Analytics** — `GET /api/v1/analytics/overview|trends|categories|emerging` (Admin): SQL `GROUP BY` / `CASE`
+aggregates, cached in Redis and invalidated on every write.
 
 ## Code layout
 
 | Path | What lives there |
 |---|---|
-| `backend/app/api/routes.py` | HTTP routes (thin — no queries) |
-| `backend/app/services/` | `complaints.py` (create, list, update, insights), `dashboard.py` (analytics SQL) |
-| `backend/app/ai/` | `triage.py` orchestrates `classifier.py`, `sentiment.py`, `entities.py`, `priority.py`; `llm.py` + `pii.py` for insights; `keywords.py` domain prior |
-| `backend/app/models.py`, `schemas.py` | SQLAlchemy tables and Pydantic request/response shapes |
-| `backend/scripts/import_dataset.py` | Loads the Kaggle CSV as historical complaints |
+| `backend/app/api/v1/` | HTTP routes (thin — parse, call a service, serialise) |
+| `backend/app/domain/` | Pure rules: `lifecycle.py` (states and moves), `routing.py` (team + agent choice) |
+| `backend/app/services/` | Business logic: tickets, routing, admin, auth, analytics, attachment storage |
+| `backend/app/repositories/` | SQL only (no rules) |
+| `backend/app/models/`, `schemas/` | SQLAlchemy tables and Pydantic request/response shapes |
+| `backend/app/auth/` | JWT, password hashing, `CurrentUser` / `AdminUser` dependencies |
+| `backend/app/ai/` | `triage.py` orchestrates `classifier.py`, `sentiment.py`, `entities.py`, `priority.py`; `llm.py` + `pii.py` for the copilot |
+| `backend/migrations/` | Alembic migrations (the only way the schema changes) |
+| `backend/scripts/` | `prepare_db.py`, `seed.py` (org + users), `import_dataset.py` (history, linked to agents and teams) |
 | `ml/` | Dataset profile, classifier training, sentiment validation, reports, model card |
-| `frontend/src/pages/` | Dashboard, Complaints list, New complaint, Complaint detail |
+| `frontend/src/pages/` | Dashboard, My work, Ticket queue, Review queue, Create ticket, Ticket details, Login, admin screens |
 
 ## Design decisions
 
-- **AI for language, rules for decisions.** Category, intent and sentiment come from models; priority is a
-  documented rule set because the data has no priority labels and the decision must be explainable.
-- **Human in the loop.** Low-confidence categories are flagged for review and can be corrected in one click
-  (priority is recomputed by the rules). The LLM's reply is a draft that an agent copies — nothing is sent
-  automatically.
-- **Works offline.** `LLM_PROVIDER=mock` produces realistic insights from the triage results without a key;
-  setting `LLM_PROVIDER=openai` and `OPENAI_API_KEY` switches to the real API with structured outputs.
-- **PostgreSQL + Alembic.** The schema is versioned with Alembic migrations (`backend/migrations`); the backend
-  uses async SQLAlchemy 2 with asyncpg. CPU-bound model inference runs in worker threads off the event loop.
+- **AI for language, rules for decisions.** Category, intent and sentiment come from models; priority and routing
+  are documented rule sets ([PRIORITY_RULES.md](PRIORITY_RULES.md), [ROUTING_RULES.md](ROUTING_RULES.md)) because
+  the decisions must be explainable — every ticket stores which rules fired.
+- **Human in the loop.** Low-confidence categories are not routed; they wait in the review queue until a person
+  confirms or corrects them. The LLM's reply is a draft — nothing is sent automatically.
+- **One place for the lifecycle.** Allowed moves are data in `app/domain/lifecycle.py`; the API, the UI's buttons
+  (`allowed_actions`) and the tests all derive from it.
+- **Works offline.** `LLM_PROVIDER=mock` produces realistic copilot output without a key; `LLM_PROVIDER=openai` and
+  `OPENAI_API_KEY` switch to the real API with structured outputs.
+- **PostgreSQL + Alembic.** Async SQLAlchemy 2 with asyncpg; CPU-bound model inference runs in worker threads off
+  the event loop.

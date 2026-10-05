@@ -60,6 +60,10 @@ class Settings(BaseSettings):
     # Category predictions below this confidence are flagged for human review.
     review_threshold: float = 0.45
 
+    # --- routing (deterministic rules, app/domain/routing.py) ---
+    # An agent with this many open tickets gets no more automatic assignments; the ticket waits in the team queue.
+    routing_max_open_per_agent: int = 25
+
     def check_production(self) -> None:
         """Refuse to start in production with development secrets."""
         if self.environment == "production" and (self.jwt_secret.startswith("dev-only") or len(self.jwt_secret) < 32):

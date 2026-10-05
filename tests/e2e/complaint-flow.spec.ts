@@ -1,7 +1,7 @@
 /**
  * The core user flow: dashboard → create ticket → AI triage preview → save → AI copilot →
- * find it in the ticket list and on the dashboard → assign → start → comment + attachment → resolve → close,
- * with every step on the ticket timeline.
+ * routed by the rules to a Payments Support agent → find it in the ticket list and on the dashboard → reassign →
+ * start → comment + attachment → resolve → close, with every step on the ticket timeline.
  */
 import { expect, test } from "@playwright/test";
 
@@ -41,6 +41,12 @@ test("ticket is triaged, summarised, tracked on the dashboard and resolved", asy
   await expect(page.getByText("Very negative sentiment")).toBeVisible();
   await expect(page.getByText("already Critical").first()).toBeVisible();
 
+  // 3b. Routed by the rules (never the LLM): Payments related → Payments Support → least-busy agent.
+  const timeline = page.getByRole("list", { name: "Ticket timeline" });
+  await expect(timeline).toContainText("Routing rules: assigned to");
+  await expect(timeline).toContainText("in Payments Support");
+  await expect(page.getByText(/Least busy of \d+ available agents in Payments Support/).first()).toBeVisible();
+
   // 4. AI copilot (mock provider): summary, key issues, recommended actions, draft reply.
   await page.getByRole("button", { name: "Run copilot" }).click();
   await expect(page.getByRole("heading", { name: "Recommended actions" })).toBeVisible();
@@ -57,8 +63,8 @@ test("ticket is triaged, summarised, tracked on the dashboard and resolved", asy
   await expect(row).toContainText("Payments related");
   await expect(row).toContainText("Very Negative");
   await expect(row).toContainText("Critical");
-  await expect(row).toContainText("Triaged");
-  await expect(row).toContainText("Unassigned");
+  await expect(row).toContainText("Assigned");
+  await expect(row).toContainText("Payments Support");
 
   // 6. Dashboard: it appears among the open high-priority tickets.
   await nav("Dashboard").click();
@@ -68,14 +74,15 @@ test("ticket is triaged, summarised, tracked on the dashboard and resolved", asy
   // 7. Work it through the lifecycle from the ticket workspace.
   await page.goto(ticketUrl);
   const actions = page.getByRole("toolbar", { name: "Ticket actions" });
-  await expect(actions.getByRole("button", { name: "Close" })).toHaveCount(0); // not allowed from TRIAGED
+  await expect(actions.getByRole("button", { name: "Close" })).toHaveCount(0); // not allowed from ASSIGNED
 
+  // Reassign by hand to the teammate (the routed agent is marked "Current").
   await actions.getByRole("button", { name: "Assign" }).click();
   const assign = page.getByRole("dialog", { name: /^Assign INC-/ });
-  await assign.getByLabel("Team").selectOption({ label: "Payments Support" });
+  await expect(assign.getByLabel("Team")).toHaveValue(/\d+/); // preselected: the ticket's team
   const agents = assign.getByRole("radiogroup", { name: "Agent" });
-  await expect(agents.getByText("Least busy")).toBeVisible();
-  await agents.getByRole("radio").first().check();
+  await expect(agents.getByText("Current")).toBeVisible();
+  await agents.locator("label", { hasNot: page.getByText("Current") }).first().getByRole("radio").check();
   await assign.getByLabel("Note (optional)").fill("Duplicate debit, high value");
   await assign.getByRole("button", { name: "Assign" }).click();
   await expect(assign).toBeHidden();
@@ -99,8 +106,8 @@ test("ticket is triaged, summarised, tracked on the dashboard and resolved", asy
   await actions.getByRole("button", { name: "Close" }).click();
   await expect(actions.getByRole("button", { name: "Reopen" })).toBeVisible();
 
-  const timeline = page.getByRole("list", { name: "Ticket timeline" });
-  for (const text of ["created the ticket", "AI triage: Payments related", "assigned it to", "to In progress", "commented",
+  for (const text of ["created the ticket", "AI triage: Payments related", "Routing rules: assigned to", "assigned it to",
+    "to In progress", "commented",
     "attached statement.txt", "to Resolved", "to Closed"]) {
     await expect(timeline).toContainText(text);
   }

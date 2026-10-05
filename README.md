@@ -14,6 +14,7 @@ Satisfaction* dataset (85,907 support records from an Indian e-commerce company)
 | Sentiment (5 levels) | Pretrained Hugging Face model `nlptown/bert-base-multilingual-uncased-sentiment`, validated against CSAT |
 | Entities | Rules: ₹ amounts (₹/Rs/INR/lakh), order IDs, dates, products, repeat-contact cues |
 | Priority (Low → Critical) | Transparent raise-only business rules ([docs/PRIORITY_RULES.md](docs/PRIORITY_RULES.md)) — never the LLM |
+| Routing (team + agent) | Deterministic rules: category → owning team → least-busy agent; low confidence → review queue ([docs/ROUTING_RULES.md](docs/ROUTING_RULES.md)) |
 | Summary, key issues, recommended actions, draft reply | OpenAI API with structured outputs; offline **mock** provider when no key is set; PII masked first |
 | Dashboard | KPIs, daily volume & sentiment trends, category / intent / channel breakdowns, week-over-week emerging issues, open high-priority list, auto-generated insights |
 
@@ -79,7 +80,10 @@ and are renewed automatically from an HttpOnly refresh cookie; reusing an old re
 5. **Ticket queue** — saved views (all open, unassigned, assigned to me, escalated, needs review, resolved & closed)
    plus search and filters over 85k+ tickets. Admins see everything; agents see their own, their team's and the
    tickets they created (other tickets return 404).
-6. **My work** — the agent's start page: open tickets by state, highest priority first, and the team's unassigned
+6. **Routing** — every new ticket is routed by rules (never the LLM): category → owning team → least-busy active
+   agent (ties round-robin), or the team queue when nobody is free. Low-confidence categories wait in the Admin
+   **Review queue**; confirming or correcting the category routes them. See [docs/ROUTING_RULES.md](docs/ROUTING_RULES.md).
+7. **My work** — the agent's start page: open tickets by state, highest priority first, and the team's unassigned
    backlog.
 
 Permissions follow the spec: agents work on own/team tickets and may reassign within their team; reassigning to
@@ -124,6 +128,7 @@ needs `Authorization: Bearer <access token>`; Admin-only routes return 403 for a
 | GET | `/tickets/summary` | Ticket counts per state within the caller's scope (accepts the same filters) |
 | GET / PATCH | `/tickets/{id}` | Detail workspace (comments, attachments, timeline, customer, previous tickets, `allowed_actions`) · PATCH `status` (`IN_PROGRESS` / `WAITING_CUSTOMER`: start, wait, resume) or correct `category` |
 | POST | `/tickets/{id}/assign`, `/escalate`, `/resolve`, `/close`, `/reopen` | Lifecycle actions (illegal moves → 409, missing permission → 403) |
+| POST | `/tickets/{id}/auto-assign` | Admin: re-run the routing rules on an unassigned ticket |
 | GET / POST | `/tickets/{id}/comments` · `/tickets/{id}/timeline` | Comments (first one sets `first_response_at`) · event timeline |
 | POST / GET | `/tickets/{id}/attachments` · `/attachments/{aid}` | Upload (allow-listed types, content sniffed, 10 MB) · download |
 | GET | `/teams/{id}/members` | Active members with their open-ticket load (agents: own team) |
@@ -145,11 +150,11 @@ backend/app/        FastAPI app — api/v1/ (routes), domain/ (ticket state mach
 backend/scripts/    prepare_db.py (create + migrate), seed.py (org + users), import_dataset.py
 backend/migrations/ Alembic migrations
 ml/                 profile_dataset.py, train_classifiers.py, eval_sentiment.py, reports/, MODEL_CARD.md
-frontend/src/       pages/ (Dashboard, MyWork, Tickets, NewTicket, TicketDetail, Login, admin/), components/ (ticket/:
+frontend/src/       pages/ (Dashboard, MyWork, Tickets, ReviewQueue, NewTicket, TicketDetail, Login, admin/), components/ (ticket/:
                     ActionBar, Conversation, Timeline), api/, auth/
-tests/backend/      pytest (AI components, API, auth/permissions, lifecycle, dashboard)
+tests/backend/      pytest (AI components, API, auth/permissions, lifecycle, routing, dashboard)
 tests/e2e/          Playwright end-to-end test of the full complaint flow
-docs/               DATA_PROFILE.md, ARCHITECTURE.md, PRIORITY_RULES.md
+docs/               DATA_PROFILE.md, ARCHITECTURE.md, PRIORITY_RULES.md, ROUTING_RULES.md
 scripts/dev.ps1     all developer commands
 ```
 

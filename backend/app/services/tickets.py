@@ -34,10 +34,11 @@ from app.domain.lifecycle import (
     next_status,
 )
 from app.models import AIAnalysis, Customer, Ticket, TicketAttachment, TicketComment, User
+from app.repositories import routing as routing_repo
 from app.repositories import tickets as repo
 from app.repositories import users as users_repo
 from app.schemas.tickets import TicketCreate, TicketUpdate
-from app.services import storage
+from app.services import routing, storage
 from app.services.analytics import invalidate_cache
 
 # ------------------------------------------------------------------------------------------------ helpers
@@ -117,6 +118,15 @@ def visibility_clause(user: User) -> ColumnElement[bool]:
     return or_(*conditions) if conditions else false()
 
 
+def can_view(user: User, t: Ticket) -> bool:
+    """The same rule as `visibility_clause`, for a ticket already loaded."""
+    return (
+        user.role == "ADMIN"
+        or user.id in (t.assignee_id, t.created_by_id)
+        or (user.team_id is not None and t.team_id == user.team_id)
+    )
+
+
 def works_on(user: User, t: Ticket) -> bool:
     return user.role == "ADMIN" or t.assignee_id == user.id or (user.team_id is not None and t.team_id == user.team_id)
 
@@ -133,8 +143,14 @@ def permitted(user: User, t: Ticket, action: Action) -> bool:
     return works_on(user, t)
 
 
+def can_auto_assign(user: User, t: Ticket) -> bool:
+    """Admins can re-run routing on a ticket that waits in a team queue (or is unrouted) with a confirmed category."""
+    return user.role == "ADMIN" and t.status == Status.TRIAGED and t.assignee_id is None and not t.needs_review
+
+
 def actions_for(user: User, t: Ticket) -> list[str]:
-    return [a.value for a in allowed_actions(t.status) if permitted(user, t, a)]
+    actions = [a.value for a in allowed_actions(t.status) if permitted(user, t, a)]
+    return [*actions, "auto_assign"] if can_auto_assign(user, t) else actions
 
 
 def _transition(t: Ticket, action: Action) -> Status:
@@ -195,9 +211,10 @@ def apply_triage(t: Ticket, r: TriageResult) -> None:
     t.model_version, t.labels_from = r.model_version, "model"
 
 
-def triage_analysis(t: Ticket) -> AIAnalysis:
+def triage_analysis(t: Ticket, alternatives: list[tuple[str, float]] | None = None) -> AIAnalysis:
     """Record of one triage run (every AI output stores its confidence and model version)."""
     return AIAnalysis(
+        alternatives=[[c, round(float(p), 4)] for c, p in alternatives] if alternatives else None,
         ticket_id=t.id,
         kind="triage",
         category=t.category,
@@ -244,7 +261,7 @@ async def create_ticket(db: AsyncSession, user: User, data: TicketCreate) -> Tic
     await repo.add(db, t)
     _event(db, t, "created", user, channel=t.channel)
     apply_triage(t, result)
-    await repo.add_analysis(db, triage_analysis(t))
+    await repo.add_analysis(db, triage_analysis(t, result.top_categories))
     t.status = next_status(t.status, Action.TRIAGE).value
     _event(
         db,
@@ -259,6 +276,8 @@ async def create_ticket(db: AsyncSession, user: User, data: TicketCreate) -> Tic
         needs_review=t.needs_review,
         model_version=t.model_version,
     )
+    # Rules, not the LLM: category -> owning team -> least-busy agent (or the review queue). Same transaction.
+    await routing.route(db, t, trigger="triage")
     await _done(db)
     return await get_ticket(db, user, t.id)
 
@@ -360,6 +379,7 @@ async def assign(db: AsyncSession, user: User, ticket_id: int, assignee_id: int,
     t.assignee_id = target.id
     if target.team_id is not None:
         t.team_id = target.team_id
+    await routing_repo.mark_assigned(db, target.id, _now())
     _event(
         db,
         t,
@@ -486,39 +506,80 @@ async def update_ticket(db: AsyncSession, user: User, ticket_id: int, data: Tick
         await change_status(db, user, ticket_id, data.status)
     if data.category:
         await correct_category(db, user, ticket_id, data.category)
+        # A corrected category can route the ticket to another team, out of the caller's sight. They still get the
+        # result of their own change (with can_view=False) instead of a confusing 404.
+        t = await repo.get(db, ticket_id)
+        if t is None:
+            raise NOT_FOUND
+        return t
     return await get_ticket(db, user, ticket_id)
 
 
 async def correct_category(db: AsyncSession, user: User, ticket_id: int, category: str) -> Ticket:
-    t = await get_ticket(db, user, ticket_id)
+    """A person corrects the AI's category — or confirms it (same category on a ticket flagged for review).
+    Priority is recomputed by the rules and an untouched ticket is routed to the (new) owning team."""
+    t = await repo.get(db, ticket_id, visible=visibility_clause(user), for_update=True)
+    if t is None:
+        raise NOT_FOUND
     if not works_on(user, t):
         raise _forbidden("You can only change tickets assigned to you or your team.")
     if Status(t.status) in DONE_STATUSES:
         raise _conflict("Reopen the ticket before changing its category.")
-    if category == t.category:
-        return t
     if category not in BASE_PRIORITY:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Unknown category")
-    old_category, old_priority = t.category, t.priority
+    confirming = category == t.category
+    if confirming and not t.needs_review:
+        return t
+    old_category, old_priority, confidence = t.category, t.priority, t.category_confidence
     t.category, t.category_confidence, t.needs_review, t.labels_from = category, 1.0, False, "human"
-    decision = decide_priority(
-        t.category, t.sentiment, t.amount_inr, bool((t.entities or {}).get("repeat_contact")), t.intent, t.description
-    )
-    t.priority = decision.priority
-    t.priority_reasons = [
-        {"rule": "BASE", "reason": f"Base priority for {t.category}", "from": "", "to": decision.base},
-        *decision.reasons,
-    ]
     t.updated_at = _now()
-    _event(
-        db,
-        t,
-        "category_corrected",
-        user,
-        **{"from": old_category, "to": category, "priority_from": old_priority, "priority_to": t.priority},
+    if confirming:
+        _event(db, t, "category_confirmed", user, category=category, model_confidence=confidence)
+    else:
+        decision = decide_priority(
+            t.category,
+            t.sentiment,
+            t.amount_inr,
+            bool((t.entities or {}).get("repeat_contact")),
+            t.intent,
+            t.description,
+        )
+        t.priority = decision.priority
+        t.priority_reasons = [
+            {"rule": "BASE", "reason": f"Base priority for {t.category}", "from": "", "to": decision.base},
+            *decision.reasons,
+        ]
+        _event(
+            db,
+            t,
+            "category_corrected",
+            user,
+            **{"from": old_category, "to": category, "priority_from": old_priority, "priority_to": t.priority},
+        )
+    await routing.reroute_after_category_change(
+        db, t, actor=user, trigger="category_confirmed" if confirming else "category_corrected"
     )
     await _done(db)
     return t
+
+
+async def auto_assign(db: AsyncSession, user: User, ticket_id: int) -> Ticket:
+    """Admin: run the routing rules again (e.g. once an agent of a full team has capacity)."""
+    t = await repo.get(db, ticket_id, visible=visibility_clause(user), for_update=True)
+    if t is None:
+        raise NOT_FOUND
+    if user.role != "ADMIN":
+        raise _forbidden("Only an Admin can re-run routing.")
+    if not can_auto_assign(user, t):
+        why = (
+            "Confirm the category in the review queue first."
+            if t.needs_review
+            else (f"Only unassigned TRIAGED tickets can be auto-assigned (this one is {t.status}).")
+        )
+        raise _conflict(why, "not_routable")
+    await routing.route(db, t, actor=user, trigger="manual")
+    await _done(db)
+    return await get_ticket(db, user, t.id)
 
 
 # ------------------------------------------------------------------------------------------------ comments & files

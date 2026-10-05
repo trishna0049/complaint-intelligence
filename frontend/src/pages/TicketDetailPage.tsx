@@ -1,4 +1,4 @@
-import { AlertTriangle, ArrowLeft, Bot, Check, ClipboardCopy, FileText, ListChecks, RefreshCw, Sparkles, UserRound, Users } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Bot, Check, ClipboardCopy, FileText, ListChecks, RefreshCw, Route, ShieldQuestion, Sparkles, UserRound, Users } from "lucide-react";
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { ApiError } from "@/api/http";
@@ -30,7 +30,9 @@ export function TicketDetailPage() {
     );
   }
   if (!t) return null;
+  if (!t.can_view) return <MovedAway ticket={t} />;
   const done = t.status === "RESOLVED" || t.status === "CLOSED";
+  const routing = [...t.timeline].reverse().find((e) => e.event_type === "routed");
 
   return (
     <div>
@@ -72,7 +74,8 @@ export function TicketDetailPage() {
               title="AI triage"
               icon={<Sparkles className="h-4 w-4 text-violet-500" />}
               subtitle={t.labels_from === "dataset" ? "Historical record — category and intent are the dataset's own labels" :
-                t.labels_from === "human" ? "Category corrected by a person" : t.model_version ?? undefined}
+                t.labels_from === "human" ? (lastCategoryEvent(t) === "category_confirmed" ? "AI category confirmed by a person" : "Category corrected by a person") :
+                t.model_version ?? undefined}
             />
             <div className="p-4">
               <TriageView category={t.category} categoryConfidence={t.labels_from === "model" ? t.category_confidence : null}
@@ -100,6 +103,12 @@ export function TicketDetailPage() {
                 <dt className="text-xs text-slate-500">Team</dt>
                 <dd className="mt-0.5 text-slate-800">{t.team?.name ?? <span className="text-slate-400">Not routed</span>}</dd>
               </div>
+              {routing?.metadata?.reason != null && (
+                <div>
+                  <dt className="text-xs text-slate-500">Routing</dt>
+                  <dd className="mt-0.5 text-xs text-slate-600">{String(routing.metadata.reason)}</dd>
+                </div>
+              )}
               {t.escalated_at && (
                 <div>
                   <dt className="text-xs text-slate-500">Escalated</dt>
@@ -183,12 +192,44 @@ function CustomerCard({ ticket }: { ticket: TicketDetail }) {
   );
 }
 
+function lastCategoryEvent(t: TicketDetail): string | undefined {
+  return [...t.timeline].reverse().find((e) => e.event_type === "category_confirmed" || e.event_type === "category_corrected")?.event_type;
+}
+
+function MovedAway({ ticket }: { ticket: TicketDetail }) {
+  return (
+    <Card>
+      <EmptyState
+        title={`${ticket.ticket_number} moved to ${ticket.team?.name ?? "another team"}`}
+        description={`With the category ${ticket.category}, the routing rules gave it to ${ticket.assignee?.name ?? "that team's queue"}. It's no longer in your queue.`}
+        icon={<Route className="h-6 w-6" />}
+        action={<Link to="/my-work" className="text-sm text-brand-600 hover:underline">Back to My work</Link>}
+      />
+    </Card>
+  );
+}
+
 function CategoryCorrection({ ticket }: { ticket: TicketDetail }) {
   const categories = useCategories();
   const update = useUpdateTicket(ticket.id);
   if (ticket.labels_from === "dataset") return null;
+  const alternatives = ticket.top_categories.filter(([c]) => c !== ticket.category).slice(0, 2);
   return (
     <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3 text-xs text-slate-500">
+      {ticket.needs_review && ticket.category && (
+        <div className="mb-1 flex w-full flex-wrap items-center gap-2 rounded-md bg-violet-50 px-3 py-2 text-violet-900">
+          <ShieldQuestion className="h-4 w-4" />
+          <span>Low confidence — not routed until a person confirms the category.</span>
+          <Button size="sm" icon={<Check className="h-3.5 w-3.5" />} disabled={update.isPending} onClick={() => update.mutate({ category: ticket.category! })}>
+            Confirm {ticket.category}
+          </Button>
+          {alternatives.map(([c, p]) => (
+            <Button key={c} size="sm" variant="secondary" disabled={update.isPending} onClick={() => update.mutate({ category: c })}>
+              {c} <span className="text-slate-400">{Math.round(p * 100)}%</span>
+            </Button>
+          ))}
+        </div>
+      )}
       <span>Wrong category? Correct it (priority is recalculated by the rules):</span>
       <Select aria-label="Correct category" className="h-8 w-48 text-xs" value={ticket.category ?? ""}
         onChange={(e) => update.mutate({ category: e.target.value })} disabled={update.isPending}>

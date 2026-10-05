@@ -47,6 +47,7 @@ async def to_detail(db: AsyncSession, user: User, t: Ticket) -> TicketDetail:
     detail.timeline = [EventOut.model_validate(e) for e in bundle["timeline"]]
     detail.previous_tickets = [PreviousTicket.model_validate(p) for p in bundle["previous_tickets"]]
     detail.allowed_actions = bundle["allowed_actions"]
+    detail.can_view = svc.can_view(user, t)
     return detail
 
 
@@ -133,6 +134,12 @@ async def update_ticket(ticket_id: int, body: TicketUpdate, user: CurrentUser, d
 @router.post("/{ticket_id}/assign", response_model=TicketDetail)
 async def assign(ticket_id: int, body: AssignRequest, user: CurrentUser, db: AsyncSession = Db) -> TicketDetail:
     return await to_detail(db, user, await svc.assign(db, user, ticket_id, body.assignee_id, body.note))
+
+
+@router.post("/{ticket_id}/auto-assign", response_model=TicketDetail)
+async def auto_assign(ticket_id: int, user: CurrentUser, db: AsyncSession = Db) -> TicketDetail:
+    """Admin: re-run the routing rules on an unassigned ticket (category -> team -> least-busy agent)."""
+    return await to_detail(db, user, await svc.auto_assign(db, user, ticket_id))
 
 
 @router.post("/{ticket_id}/escalate", response_model=TicketDetail)
