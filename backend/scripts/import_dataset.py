@@ -9,7 +9,10 @@
 * Empty remarks get a templated description (description_source='template', excluded from model training).
 * `Issue_reported at` becomes created_at and `issue_responded` the first-response time (also used as the
   resolution time: every historical contact was closed in that interaction).
-* Every historical contact was handled and surveyed, so imported tickets are CLOSED.
+* Every historical contact was handled and surveyed, so imported tickets are CLOSED — and get their real SLA outcome
+  (response time against the default policy of their priority, app.services.sla.score_history).
+* Remarks get the same rule-based entity extraction as new complaints (amounts, order ids, repeat-contact cues), and
+  the repeat cue feeds the raise-only priority rules like it does for new tickets.
 * After the insert, `link_history` sets each ticket's assignee (the dataset's Agent_name, seeded as a user by
   scripts/seed.py) and team (the team that owns the ticket's category). It only fills empty links, so it is safe
   to re-run — run the seed first, or re-run the import after seeding to link existing rows.
@@ -32,10 +35,12 @@ from sqlalchemy import column, select, table, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.ai.entities import extract_entities
 from app.ai.priority import decide_priority
 from app.core.config import REPO_DIR, get_settings
 from app.core.db import SessionLocal, dispose_engine
 from app.models import Category, Ticket, User
+from app.services.sla import score_history
 
 TS = "%d/%m/%Y %H:%M"
 
@@ -88,7 +93,9 @@ async def run(csv_path: Path, limit: int | None = None, shift_to_now: bool = Tru
         for r in todo.rename(columns=COLUMNS).itertuples(index=False):
             amount = None if pd.isna(r.price) else float(r.price)
             sentiment = r.sentiment if isinstance(r.sentiment, str) else None
-            decision = decide_priority(r.category, sentiment, amount, False, r.intent, r.remark)
+            entities = extract_entities(r.remark) if r.remark else None
+            repeat = bool(entities and entities["repeat_contact"])
+            decision = decide_priority(r.category, sentiment, amount, repeat, r.intent, r.remark)
             created = r.reported.to_pydatetime().replace(tzinfo=UTC) + shift
             responded = None if pd.isna(r.responded) else r.responded.to_pydatetime().replace(tzinfo=UTC) + shift
             if responded is not None and responded < created:
@@ -121,7 +128,7 @@ async def run(csv_path: Path, limit: int | None = None, shift_to_now: bool = Tru
                         {"rule": "BASE", "reason": f"Base priority for {r.category}", "from": "", "to": decision.base},
                         *decision.reasons,
                     ],
-                    "entities": None,
+                    "entities": entities,
                     "needs_review": False,
                     "labels_from": "dataset",
                     "model_version": None,
@@ -135,9 +142,12 @@ async def run(csv_path: Path, limit: int | None = None, shift_to_now: bool = Tru
             await db.commit()
             print(f"imported {min(i + batch, len(rows)):,} / {len(rows):,}")
         linked = await link_history(db, df[["Unique id", "Agent_name"]])
+        scored = await score_history(db)
+        await db.commit()
     await dispose_engine()
     print(
         f"linked {linked['assignee']:,} tickets to their agent and {linked['team']:,} to a team; "
+        f"SLA outcome for {scored:,}; "
         f"done: {inserted:,} new rows ({len(df) - len(rows):,} already present) in {time.perf_counter() - started:.1f}s"
     )
     return inserted

@@ -258,3 +258,35 @@ async def scan_forever(stop: Any) -> None:
             await asyncio.wait_for(stop.wait(), timeout=interval)
         except TimeoutError:
             pass
+
+
+# ------------------------------------------------------------------------------------------------ history
+async def score_history(db: AsyncSession) -> int:
+    """Give resolved / closed tickets that never had a clock (imported history) their real outcome: the clock ran
+    from created_at to the resolution, against the default policy of their priority. Idempotent (only rows with no
+    SLA yet). Used by the dataset importer and the history backfill; migration 0009 did the same for existing data."""
+    from sqlalchemy import text
+
+    result = await db.execute(
+        text(
+            """
+            UPDATE tickets t SET
+                sla_policy_id = p.id,
+                sla_target_seconds = p.target_minutes * 60,
+                sla_started_at = t.created_at,
+                sla_deadline = t.created_at + make_interval(mins => p.target_minutes),
+                sla_stopped_at = coalesce(t.resolved_at, t.closed_at),
+                sla_status = CASE WHEN coalesce(t.resolved_at, t.closed_at)
+                                       <= t.created_at + make_interval(mins => p.target_minutes)
+                                  THEN 'met' ELSE 'breached' END,
+                sla_breached_at = CASE WHEN coalesce(t.resolved_at, t.closed_at)
+                                            > t.created_at + make_interval(mins => p.target_minutes)
+                                       THEN t.created_at + make_interval(mins => p.target_minutes) END
+            FROM sla_policies p
+            WHERE p.priority = t.priority AND p.category IS NULL AND p.is_active
+              AND t.sla_started_at IS NULL AND t.status IN ('RESOLVED', 'CLOSED')
+              AND coalesce(t.resolved_at, t.closed_at) IS NOT NULL
+            """
+        )
+    )
+    return result.rowcount or 0

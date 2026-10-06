@@ -18,6 +18,9 @@ import type {
   Department,
   Emerging,
   Granularity,
+  MyStats,
+  Performance,
+  Workload,
   Overview,
   Page,
   Ticket,
@@ -52,6 +55,20 @@ export const useCategoryBreakdowns = (days: number) =>
 
 export const useEmerging = () =>
   useQuery({ queryKey: ["analytics", "emerging"], queryFn: () => api<Emerging>("/analytics/emerging") });
+
+export const usePerformance = (days: number, granularity: Granularity) =>
+  useQuery({
+    queryKey: ["analytics", "performance", days, granularity],
+    queryFn: () => api<Performance>("/analytics/performance", { query: { days, granularity } }),
+    ...keep,
+  });
+
+export const useWorkload = () =>
+  useQuery({ queryKey: ["analytics", "workload"], queryFn: () => api<Workload>("/analytics/workload"), ...keep });
+
+/** The signed-in user's own numbers; refreshed whenever tickets change (the ticket mutations invalidate "analytics"). */
+export const useMyStats = () =>
+  useQuery({ queryKey: ["analytics", "me"], queryFn: () => api<MyStats>("/analytics/me"), refetchInterval: 60_000 });
 
 // ------------------------------------------------------------------ tickets
 export const useTickets = (query: Query) =>

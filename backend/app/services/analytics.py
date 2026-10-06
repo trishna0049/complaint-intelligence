@@ -67,7 +67,7 @@ async def _overview(db: AsyncSession, days: int, now: datetime | None = None) ->
             }
             for t in hot
         ],
-        "insights": build_insights(current, emerging),
+        "insights": build_insights(current, emerging) + await operational_insights(db, now),
     }
 
 
@@ -83,7 +83,8 @@ async def trends(db: AsyncSession, days: int = 30, granularity: str = "day") -> 
 # ------------------------------------------------------------------------------------------- categories
 async def categories(db: AsyncSession, days: int = 30) -> dict[str, Any]:
     async def compute() -> dict[str, Any]:
-        _, since, _ = window(days)
+        now, since, _ = window(days)
+        until = now + timedelta(seconds=1)
         sentiment_dist = await q.sentiment_distribution(db, since)
         return {
             "window_days": days,
@@ -92,6 +93,10 @@ async def categories(db: AsyncSession, days: int = 30) -> dict[str, Any]:
             "channels": await q.breakdown(db, Ticket.channel, since),
             "priorities": await q.breakdown(db, Ticket.priority, since),
             "sentiment": [{"name": s, "count": sentiment_dist.get(s, 0)} for s in q.SENTIMENTS],
+            # Rates by channel, city and product (spec), with how many tickets carry the field ("data coverage").
+            "channel_rates": await q.segment_rates(db, Ticket.channel, since, until),
+            "city_rates": await q.segment_rates(db, Ticket.city, since, until, limit=15),
+            "product_rates": await q.segment_rates(db, Ticket.product, since, until, limit=15),
         }
 
     return await cached_json(CACHE_NS, f"categories:{days}", CACHE_SECONDS, compute)
@@ -170,3 +175,101 @@ async def _sla(db: AsyncSession, days: int, granularity: str, now: datetime | No
         "by_team": await q.sla_by_team(db, since, until, Team),
         "trend": await q.sla_trend(db, since, until, granularity),
     }
+
+
+# ------------------------------------------------------------------------------------------- performance
+async def performance(db: AsyncSession, days: int = 30, granularity: str = "day") -> dict[str, Any]:
+    return await cached_json(
+        CACHE_NS, f"performance:{days}:{granularity}", CACHE_SECONDS, lambda: _performance(db, days, granularity)
+    )
+
+
+async def _performance(db: AsyncSession, days: int, granularity: str, now: datetime | None = None) -> dict[str, Any]:
+    now, since, _ = window(days, now)
+    until = now + timedelta(seconds=1)
+    return {
+        "window_days": days,
+        "granularity": granularity,
+        "generated_at": now.isoformat(),
+        **await q.timing(db, since, until),
+        "by_channel": await q.timing_by(db, since, until, Ticket.channel),
+        "by_priority": await q.timing_by(db, since, until, Ticket.priority),
+        "trend": await q.timing_trend(db, since, until, granularity),
+        "repeat": await q.repeat_complaints(db, since, until),
+    }
+
+
+# ------------------------------------------------------------------------------------------- workload
+async def workload(db: AsyncSession) -> dict[str, Any]:
+    async def compute() -> dict[str, Any]:
+        now = datetime.now(UTC)
+        teams = await q.team_workload(db, now)
+        return {
+            "generated_at": now.isoformat(),
+            "teams": teams,
+            "agents": await q.agent_workload(db, now),
+            "totals": {
+                "open": sum(t["open"] for t in teams),
+                "unassigned": sum(t["unassigned"] for t in teams),
+                "at_risk": sum(t["at_risk"] for t in teams),
+                "agents": sum(t["agents"] for t in teams),
+            },
+        }
+
+    return await cached_json(CACHE_NS, "workload", CACHE_SECONDS, compute)
+
+
+# ------------------------------------------------------------------------------------------- my stats
+async def my_stats(db: AsyncSession, user: Any) -> dict[str, Any]:
+    """An agent's own numbers (spec: "My stats": open tickets, SLA at risk, resolved this week). Not cached: it must
+    move the moment the agent resolves something."""
+    from sqlalchemy import func, select
+
+    from app.domain.lifecycle import OPEN_STATUSES
+
+    now = datetime.now(UTC)
+    stats = await q.my_stats(db, user.id, now)
+    backlog = None
+    if user.team_id:
+        backlog = await db.scalar(
+            select(func.count()).where(
+                Ticket.team_id == user.team_id,
+                Ticket.assignee_id.is_(None),
+                Ticket.status.in_([s.value for s in OPEN_STATUSES]),
+            )
+        )
+    return {**stats, "team_unassigned": backlog, "generated_at": now.isoformat()}
+
+
+# ------------------------------------------------------------------------------------------- operational insights
+async def operational_insights(db: AsyncSession, now: datetime) -> list[str]:
+    """Plain-English notes on SLA, response times and workload for the last 7 days (deterministic, no LLM)."""
+    since = now - timedelta(days=7)
+    until = now + timedelta(seconds=1)
+    from app.models import Team
+
+    notes: list[str] = []
+    teams = [t for t in await q.sla_by_team(db, since, until, Team) if t["with_sla"] >= 20 and t["breach_rate"]]
+    if teams:
+        worst = teams[0]
+        notes.append(
+            f"{worst['name']} has the highest SLA breach rate this week: {worst['breach_rate'] * 100:.0f}% "
+            f"of {worst['with_sla']:,} tickets."
+        )
+    channels = [c for c in await q.timing_by(db, since, until, Ticket.channel) if c["tickets"] >= 20]
+    timed = [c for c in channels if c["median_first_response_minutes"] is not None]
+    if len(timed) >= 2:
+        slow = max(timed, key=lambda c: c["median_first_response_minutes"])
+        fast = min(timed, key=lambda c: c["median_first_response_minutes"])
+        if slow["median_first_response_minutes"] > fast["median_first_response_minutes"]:
+            notes.append(
+                f"{slow['name']} contacts wait longest for a first response (median "
+                f"{slow['median_first_response_minutes']:.0f} min vs {fast['median_first_response_minutes']:.0f} min "
+                f"for {fast['name']})."
+            )
+    backlog = [t for t in await q.team_workload(db, now) if t["unassigned"] > 0]
+    if backlog:
+        top = max(backlog, key=lambda t: t["unassigned"])
+        n = top["unassigned"]
+        notes.append(f"{top['team']} has the largest unassigned backlog: {n:,} open ticket{'' if n == 1 else 's'}.")
+    return notes

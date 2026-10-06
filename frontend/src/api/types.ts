@@ -416,6 +416,110 @@ export interface CategoryBreakdowns {
   channels: Breakdown[];
   priorities: Breakdown[];
   sentiment: { name: string; count: number }[];
+  channel_rates: SegmentRates;
+  city_rates: SegmentRates;
+  product_rates: SegmentRates;
+}
+
+export interface SegmentRate {
+  name: string;
+  count: number;
+  negative_share: number | null;
+  high_priority_share: number | null;
+  breach_rate: number | null;
+  avg_csat: number | null;
+}
+
+/** Rates per segment plus how many tickets in the window carry the field at all ("data coverage"). */
+export interface SegmentRates {
+  coverage: number | null;
+  with_value: number;
+  items: SegmentRate[];
+}
+
+export interface TimingStats {
+  count: number;
+  coverage: number | null;
+  avg_minutes: number | null;
+  median_minutes: number | null;
+  p90_minutes: number | null;
+}
+
+export interface TimingBy {
+  name: string;
+  tickets: number;
+  median_first_response_minutes: number | null;
+  median_resolution_minutes: number | null;
+}
+
+export interface RepeatStats {
+  tickets: number;
+  with_text: number;
+  repeat_cue: number;
+  known_customer: number;
+  returning_customer: number;
+  repeats: number;
+  repeat_rate: number | null;
+  window_days: number;
+}
+
+export interface Performance {
+  window_days: number;
+  granularity: Granularity;
+  generated_at: string;
+  tickets: number;
+  first_response: TimingStats;
+  resolution: TimingStats;
+  by_channel: TimingBy[];
+  by_priority: TimingBy[];
+  trend: { date: string; tickets: number; median_first_response_minutes: number | null; median_resolution_minutes: number | null }[];
+  repeat: RepeatStats;
+}
+
+export interface TeamWorkload {
+  team_id: number;
+  team: string;
+  agents: number;
+  open: number;
+  unassigned: number;
+  open_per_agent: number | null;
+  at_risk: number;
+  breached_open: number;
+  created_7d: number;
+  resolved_7d: number;
+}
+
+export interface AgentWorkload {
+  user_id: number;
+  name: string;
+  team: string | null;
+  open: number;
+  at_risk: number;
+  breached_open: number;
+  resolved_7d: number;
+  median_resolution_minutes_7d: number | null;
+}
+
+export interface Workload {
+  generated_at: string;
+  teams: TeamWorkload[];
+  agents: AgentWorkload[];
+  totals: { open: number; unassigned: number; at_risk: number; agents: number };
+}
+
+export interface MyStats {
+  open: number;
+  sla_at_risk: number;
+  sla_breached_open: number;
+  waiting_on_customer: number;
+  resolved_this_week: number;
+  resolved_last_week: number;
+  median_resolution_minutes_this_week: number | null;
+  sla_met_rate_this_week: number | null;
+  avg_csat_30d: number | null;
+  team_unassigned: number | null;
+  week_start: string;
+  generated_at: string;
 }
 
 export interface EmergingIssue {

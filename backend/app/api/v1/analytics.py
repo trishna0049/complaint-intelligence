@@ -7,7 +7,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.dependencies import AdminUser
+from app.auth.dependencies import AdminUser, CurrentUser
 from app.core.db import get_session
 from app.services import analytics as svc
 
@@ -54,3 +54,27 @@ async def sla(
 ) -> dict[str, Any]:
     """SLA breach rate (overall, by priority, category and team, over time), resolution vs target, open at risk."""
     return await svc.sla(db, days, granularity)
+
+
+@router.get("/performance")
+async def performance(
+    _: AdminUser,
+    days: int = Days,
+    granularity: str = Query(default="day", pattern="^(day|week|month)$"),
+    db: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """First-response and resolution times (mean / median / p90, by channel and priority, over time) and the
+    repeat-complaint rate."""
+    return await svc.performance(db, days, granularity)
+
+
+@router.get("/workload")
+async def workload(_: AdminUser, db: AsyncSession = Depends(get_session)) -> dict[str, Any]:
+    """Team and agent workload: open, unassigned, SLA at risk / breached, created and resolved in the last 7 days."""
+    return await svc.workload(db)
+
+
+@router.get("/me")
+async def my_stats(user: CurrentUser, db: AsyncSession = Depends(get_session)) -> dict[str, Any]:
+    """ "My stats" for the signed-in user (agents and admins): open, SLA at risk, resolved this week."""
+    return await svc.my_stats(db, user)

@@ -13,6 +13,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { PerformancePanel, SegmentRatesPanel, WorkloadPanel } from "@/components/AnalyticsPanels";
 import { SlaPanel } from "@/components/SlaPanel";
 import { useCategoryBreakdowns, useEmerging, useOverview, useTrends } from "@/api/client";
 import type { Breakdown, EmergingIssue, Granularity } from "@/api/types";
@@ -53,8 +54,13 @@ export function DashboardPage() {
     <>
       <PageHeader
         title="Complaint dashboard"
-        description="Volumes, sentiment and high-priority issues across all tickets."
-        actions={<Segmented label="Time range" options={RANGES.map((r) => ({ value: r, label: `${r}d` }))} value={days} onChange={setDays} />}
+        description="Volumes, sentiment, SLA, response times, workload and high-priority issues across all tickets."
+        actions={
+          <div className="flex flex-wrap items-center gap-2">
+            <Segmented label="Granularity" options={GRANULARITIES.map((g) => ({ value: g, label: g[0].toUpperCase() + g.slice(1) }))} value={granularity} onChange={setGranularity} />
+            <Segmented label="Time range" options={RANGES.map((r) => ({ value: r, label: `${r}d` }))} value={days} onChange={setDays} />
+          </div>
+        }
       />
       {firstError ? (
         <Card><ErrorState error={firstError} onRetry={refetchAll} /></Card>
@@ -90,9 +96,12 @@ export function DashboardPage() {
 
           <SlaPanel days={days} />
 
+          <PerformancePanel days={days} granularity={granularity} />
+
+          <WorkloadPanel />
+
           <div className="grid gap-5 xl:grid-cols-2">
-            <ChartCard title="Ticket volume" subtitle={`Per ${granularity} — all tickets vs high/critical priority`}
-              actions={<Segmented label="Granularity" options={GRANULARITIES.map((g) => ({ value: g, label: g[0].toUpperCase() + g.slice(1) }))} value={granularity} onChange={setGranularity} small />}>
+            <ChartCard title="Ticket volume" subtitle={`Per ${granularity} — all tickets vs high/critical priority`}>
               {!trends.data ? <Skeleton className="h-[260px]" /> : (
                 <ResponsiveContainer width="100%" height={260}>
                   <LineChart data={trends.data.points} margin={{ top: 8, right: 16, bottom: 0, left: -8 }}>
@@ -174,8 +183,8 @@ export function DashboardPage() {
           </div>
 
           {breakdowns.data && (
-            <div className="grid gap-5 md:grid-cols-2">
-              <ChartCard title="By channel"><SimpleTable rows={breakdowns.data.channels} /></ChartCard>
+            <div className="grid gap-5 xl:grid-cols-3">
+              <div className="xl:col-span-2"><SegmentRatesPanel data={breakdowns.data} days={days} /></div>
               <ChartCard title="By priority"><SimpleTable rows={breakdowns.data.priorities} /></ChartCard>
             </div>
           )}

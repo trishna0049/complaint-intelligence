@@ -115,6 +115,12 @@ switch ($Command) {
         Run $Py (@("-m", "scripts.embed_tickets") + $Rest) (Join-Path $Root "backend")
     }
 
+    "backfill" {
+        # Bring imported history up to the current importer: entities for remarks, repeat-contact priority, SLA outcomes.
+        Need-Venv
+        Run $Py @("-m", "scripts.backfill_history") (Join-Path $Root "backend")
+    }
+
     "eval-retrieval" {
         # Knowledge-base and similar-ticket retrieval on fixed examples -> ml\reports\retrieval_report.md
         Need-Venv
@@ -197,6 +203,7 @@ Usage: .\scripts\dev.ps1 <command>
   seed       Teams, categories, admin, the 1,371 dataset agents and the knowledge base (idempotent; prints logins)
   import     Load data\ecommerce_support.csv into Postgres (idempotent, batched)
   embed      Embed tickets for similar-ticket search (MiniLM; run after import, idempotent)
+  backfill   Update imported history to the current importer (entities, repeat-contact priority, SLA; idempotent)
   eval-retrieval  Retrieval evaluation on fixed examples (needs seed) -> ml\reports\retrieval_report.md
   start      Create the Kafka topics, then start the API, the workers and the web app in three new windows
   workers    Outbox relay + the AI, LLM, SLA and notification workers (or one: workers ai|llm|sla|notification|relay)
