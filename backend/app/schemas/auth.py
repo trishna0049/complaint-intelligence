@@ -39,6 +39,7 @@ class UserOut(BaseModel):
     source: str
     supervisor: str | None
     last_login_at: datetime | None
+    email_notifications: bool = True
     created_at: datetime
 
 

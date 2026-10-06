@@ -85,6 +85,17 @@ class Settings(BaseSettings):
     rag_similar_tickets: int = 3  # past tickets given to the copilot as grounding
     rag_articles: int = 2  # knowledge-base articles given to the copilot as grounding
 
+    # --- notifications (app/services/notifications.py) ---
+    # Optional e-mail for escalations and SLA alerts. Empty SMTP_HOST = in-app only. Mailpit in Compose for local use.
+    smtp_host: str = ""
+    smtp_port: int = 1025
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_starttls: bool = False
+    smtp_from: str = "Complaint Intelligence <alerts@shopzilla.example>"
+    app_base_url: str = "http://localhost:15173"  # links in e-mails
+    sse_heartbeat_seconds: float = 15.0
+
     # --- SLA engine (app/domain/sla.py, app/services/sla.py) ---
     # Demo speed-up: SLA targets run this many times faster (60 -> a 2-hour SLA lapses in 2 minutes). 1 = real time.
     sla_speedup: float = 1.0

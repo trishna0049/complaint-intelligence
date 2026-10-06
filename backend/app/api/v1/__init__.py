@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter
 
-from app.api.v1 import admin, ai, analytics, auth, knowledge, meta, sla, tickets
+from app.api.v1 import admin, ai, analytics, auth, knowledge, meta, notifications, sla, tickets
 
 api_router = APIRouter(prefix="/api/v1")
 api_router.include_router(meta.router)
@@ -11,6 +11,7 @@ api_router.include_router(tickets.router)
 api_router.include_router(ai.router)
 api_router.include_router(knowledge.router)
 api_router.include_router(sla.router)
+api_router.include_router(notifications.router)
 api_router.include_router(analytics.router)
 for _r in (admin.users, admin.teams, admin.departments, admin.categories, admin.audit, admin.events):
     api_router.include_router(_r)

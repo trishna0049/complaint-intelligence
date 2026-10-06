@@ -67,6 +67,9 @@ export function signedInAs(user: User | null): Handler {
     }
     if (u.endsWith("/api/v1/auth/logout")) return { status: 204 };
     if (u.includes("/api/v1/health")) return { body: health };
+    // The app shell opens the live notification stream and the bell reads the list.
+    if (u.includes("/api/v1/notifications/stream")) return { status: 204 };
+    if (u.includes("/api/v1/notifications?")) return { body: { items: [], total: 0, page: 1, page_size: 8, unread: 0 } };
     return undefined;
   };
 }

@@ -499,3 +499,24 @@ export interface UserPatch {
   is_active?: boolean;
   password?: string;
 }
+
+export type NotificationType = "ticket_assigned" | "ticket_escalated" | "sla_warning" | "sla_breached";
+
+export interface AppNotification {
+  id: number;
+  type: NotificationType | string;
+  title: string;
+  message: string;
+  ticket_id: number | null;
+  severity: "info" | "warning" | "critical";
+  read_at: string | null;
+  created_at: string;
+}
+
+export interface NotificationPage {
+  items: AppNotification[];
+  total: number;
+  page: number;
+  page_size: number;
+  unread: number;
+}

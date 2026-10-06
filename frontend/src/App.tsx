@@ -14,6 +14,7 @@ import { ArticlePage, KnowledgePage } from "@/pages/KnowledgePage";
 import { LoginPage } from "@/pages/LoginPage";
 import { MyWorkPage } from "@/pages/MyWorkPage";
 import { NewTicketPage } from "@/pages/NewTicketPage";
+import { NotificationsPage } from "@/pages/NotificationsPage";
 import { ReviewQueuePage } from "@/pages/ReviewQueuePage";
 import { TicketDetailPage } from "@/pages/TicketDetailPage";
 import { TicketsPage } from "@/pages/TicketsPage";
@@ -42,6 +43,7 @@ export default function App() {
           <Route path="tickets" element={<TicketsPage />} />
           <Route path="tickets/new" element={<NewTicketPage />} />
           <Route path="tickets/:id" element={<TicketDetailPage />} />
+          <Route path="notifications" element={<NotificationsPage />} />
           <Route path="knowledge" element={<KnowledgePage />} />
           <Route path="knowledge/:id" element={<ArticlePage />} />
           <Route path="review" element={<RequireRole role="ADMIN" />}>

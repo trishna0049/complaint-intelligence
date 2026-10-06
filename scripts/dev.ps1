@@ -77,10 +77,11 @@ switch ($Command) {
     }
 
     "up" {
-        Compose @("up", "-d", "postgres", "redis", "kafka", "kafka-ui")
+        Compose @("up", "-d", "postgres", "redis", "kafka", "kafka-ui", "mailpit")
         Wait-Healthy "postgres"; Wait-Healthy "redis"; Wait-Healthy "kafka"
         Write-Host "Postgres on localhost:$(EnvValue 'POSTGRES_PORT' '15432'), Redis on localhost:$(EnvValue 'REDIS_PORT' '16379')" -ForegroundColor Cyan
         Write-Host "Kafka on localhost:$(EnvValue 'KAFKA_PORT' '19092'), Kafka UI on http://localhost:$(EnvValue 'KAFKA_UI_PORT' '18090')" -ForegroundColor Cyan
+        Write-Host "Mailpit (e-mail alerts) on http://localhost:$(EnvValue 'MAILPIT_UI_PORT' '18025')" -ForegroundColor Cyan
     }
 
     "down" { Compose (@("down") + $Rest) }

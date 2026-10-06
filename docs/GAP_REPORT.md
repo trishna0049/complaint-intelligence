@@ -37,7 +37,7 @@ Other differences: routes under `/api/` not `/api/v1/`; `complaints` instead of 
 | 7 | Retrieval (embeddings, KB, RAG) | ✅ Done (MiniLM + pgvector HNSW, hybrid with full text, similar tickets, 26-article KB with Admin CRUD, copilot RAG with citations, fixed-example evaluation) — embedding on create moves to the embeddings consumer in step 8 |
 | 8 | Events (Kafka, outbox, workers, DLQ) | ✅ Done (Kafka KRaft + Kafka UI, transactional outbox + relay, AI / LLM / SLA / notification workers, processed_events idempotency, 3 retries → DLQ table + topic, Admin replay / discard, Event pipeline page, integration tests on the broker) — SLA and notification handlers are filled in steps 9–10 |
 | 9 | SLA engine | ✅ Done (policies + CRUD, clock from creation, pause rule, re-target, warning 80 % / breach 100 % once each, auto-escalation via sla.breached, live badge, queue views, /analytics/sla, historical outcomes, demo speed-up) — SLA alerts to people arrive with notifications in step 10 |
-| 10 | Notifications | ⏳ Not started |
+| 10 | Notifications | ✅ Done (notifications table, worker recipients per event, Redis pub/sub → SSE with Bearer auth, bell + toasts + page, mark read, optional SMTP e-mail with opt-out, Mailpit locally) |
 | 11 | Analytics completion | ⏳ Not started |
 | 12 | AI triage gaps (spaCy, DistilBERT) | ⏳ Not started |
 | 13 | Production | ⏳ Not started |

@@ -10,6 +10,8 @@ For each event and consumer:
    blocks the queue.
 
 Handlers must not commit their writes themselves (reads may commit, e.g. before a slow LLM call).
+Side effects outside the database (Redis pub/sub, e-mail) are registered with `after_commit(db, coroutine_fn)` and run
+only once the transaction committed; their failure is logged and never undoes the handled event.
 """
 
 from __future__ import annotations
@@ -92,6 +94,12 @@ class Consumer:
             except IntegrityError:  # another instance of this consumer finished it first
                 await db.rollback()
                 return Outcome.DUPLICATE
+            after = db.info.pop("after_commit", [])
+        for callback in after:  # side effects that must only happen once the writes are durable (pub/sub, e-mail)
+            try:
+                await callback()
+            except Exception:
+                log.exception("%s: after-commit step failed for %s", self.name, env.event_id)
         await invalidate_cache()
         await bus.after_commit()
         return Outcome.PROCESSED
@@ -113,3 +121,8 @@ class Consumer:
             await db.commit()
             await db.refresh(letter)
             return letter
+
+
+def after_commit(db: AsyncSession, callback: Callable[[], Awaitable[None]]) -> None:
+    """Run `callback` after this session's transaction commits (in the consumer framework)."""
+    db.info.setdefault("after_commit", []).append(callback)

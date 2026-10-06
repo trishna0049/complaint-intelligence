@@ -29,7 +29,7 @@ id** so a ticket's events are processed in order. Domain events are derived from
 ([backend/app/services/timeline.py](../backend/app/services/timeline.py)), so every change on the timeline that matters
 to another part of the system is published, and nothing else.
 
-The SLA worker also runs the scanner that emits `sla.warning` / `sla.breached` and escalates on a breach ([SLA.md](SLA.md)); the notification worker's alerts are build step 10.
+The SLA worker also runs the scanner that emits `sla.warning` / `sla.breached` and escalates on a breach ([SLA.md](SLA.md)); the notification worker turns assignments, escalations and SLA alerts into live notifications and e-mail ([NOTIFICATIONS.md](NOTIFICATIONS.md)).
 
 ## Guarantees
 

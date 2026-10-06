@@ -1,6 +1,8 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
   Analysis,
+  AppNotification,
+  NotificationPage,
   SlaAnalytics,
   SlaPolicy,
   DeadLetter,
@@ -241,6 +243,34 @@ export const useUpdateArticle = (id: number) =>
   useArticleChange((body: Partial<ArticleInput>) => api<Article>(`/knowledge/${id}`, { method: "PATCH", body }));
 export const useDeleteArticle = (id: number) =>
   useArticleChange(() => api<undefined>(`/knowledge/${id}`, { method: "DELETE" }));
+
+// ------------------------------------------------------------------ notifications
+export const useNotificationList = (unread: boolean, pageSize = 20) =>
+  useQuery({
+    queryKey: ["notifications", unread, pageSize],
+    queryFn: () => api<NotificationPage>("/notifications", { query: { unread, page_size: pageSize } }),
+  });
+
+function useNotificationChange<TVars>(request: (vars: TVars) => Promise<unknown>) {
+  const qc = useQueryClient();
+  return useMutation({ mutationFn: request, onSuccess: () => void qc.invalidateQueries({ queryKey: ["notifications"] }) });
+}
+
+export const useMarkNotificationRead = () =>
+  useNotificationChange((id: number) => api<AppNotification>(`/notifications/${id}/read`, { method: "POST" }));
+export const useMarkAllNotificationsRead = () =>
+  useNotificationChange(() => api<{ marked: number }>("/notifications/read-all", { method: "POST" }));
+
+export const useNotificationPreferences = () =>
+  useQuery({ queryKey: ["notification-preferences"], queryFn: () => api<{ email: boolean }>("/notifications/preferences") });
+
+export function useSetNotificationPreferences() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (email: boolean) => api<{ email: boolean }>("/notifications/preferences", { method: "PUT", body: { email } }),
+    onSuccess: (data) => qc.setQueryData(["notification-preferences"], data),
+  });
+}
 
 // ------------------------------------------------------------------ SLA
 export const useSlaPolicies = () => useQuery({ queryKey: ["sla-policies"], queryFn: () => api<SlaPolicy[]>("/sla-policies") });

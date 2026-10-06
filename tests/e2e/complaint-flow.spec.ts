@@ -144,6 +144,11 @@ test("ticket is triaged, summarised, tracked on the dashboard and resolved", asy
     await expect(timeline).toContainText(text);
   }
 
+  // 7b. Notifications: the live stream is connected (SSE) and the page lists the admin's alerts.
+  await nav("Notifications").click();
+  await expect(page.getByText("Live updates on")).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Notifications/ })).toBeVisible();
+
   // 8. It has left the open high-priority list on the dashboard.
   await nav("Dashboard").click();
   await expect(page.getByText("Ticket volume")).toBeVisible(); // dashboard data has rendered

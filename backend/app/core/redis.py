@@ -68,3 +68,9 @@ async def invalidate(ns: str) -> None:
         await get_redis().incr(_gen_key(ns))
     except Exception as exc:
         log.warning("cache invalidation failed: %s", exc)
+
+
+# ------------------------------------------------------------------ pub/sub
+def channel(name: str) -> str:
+    """A pub/sub channel name, namespaced by database like the cache keys (dev and e2e never cross)."""
+    return f"pubsub:{_db_tag()}:{name}"

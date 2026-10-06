@@ -16,8 +16,8 @@ and committed locally before the next one starts.
 | 7 | Retrieval — MiniLM embeddings, HNSW, hybrid search, similar tickets, knowledge base, RAG | ✅ |
 | 8 | Events — Kafka (KRaft) + UI, outbox relay, 4 workers, idempotency, retries, DLQ + replay | ✅ |
 | 9 | SLA engine — policies, pause rule, warning/breach once, auto-escalation, live badge, demo speed-up | ✅ |
-| 10 | Notifications — table, SSE via Redis pub/sub, bell, page, toasts, optional SMTP | ⏳ next |
-| 11 | Analytics completion — SLA/timing/repeat/city/product/workload, day/week/month, My stats | ⏳ |
+| 10 | Notifications — table, SSE via Redis pub/sub, bell, page, toasts, optional SMTP | ✅ |
+| 11 | Analytics completion — SLA/timing/repeat/city/product/workload, day/week/month, My stats | ⏳ next |
 | 12 | AI triage gaps — spaCy entities, DistilBERT comparison | ⏳ |
 | 13 | Production — rate limits, headers, metrics, Grafana, Dockerfiles, Makefile, CI (Trivy, GHCR), docs | ⏳ |
 | 14 | Tests — unit, permissions, Kafka integration, full Playwright flow | ⏳ |
@@ -59,11 +59,13 @@ and committed locally before the next one starts.
 - SLA ([docs/SLA.md](docs/SLA.md)): the SLA worker starts / pauses / resumes / re-targets / stops clocks and runs the
   scanner (`sla.warning` at 80 %, `sla.breached` at 100 %, once each); a breach escalates automatically. Demo:
   `SLA_SPEEDUP=120` for the workers. Inline mode (no workers) runs the scanner in the API process.
-- The notification worker is subscribed (topics, group, idempotency, DLQ work) but its handler is a pass-through
-  until step 10 — by plan.
-- Next: step 10 (notifications: `notifications` table, notification worker writes them for ticket.assigned /
-  escalated / sla.warning / sla.breached, SSE stream via Redis pub/sub, bell + unread count, Notifications page,
-  toasts, `POST /notifications/{id}/read`, optional SMTP e-mail).
+- Notifications ([docs/NOTIFICATIONS.md](docs/NOTIFICATIONS.md)): the notification worker writes them, Redis pub/sub +
+  SSE (`/notifications/stream`, fetch streaming with the Bearer header) deliver them live; bell, toasts, page; e-mail
+  for escalations / SLA alerts when `SMTP_HOST` is set (Mailpit in Compose: `.env` has SMTP_HOST=localhost,
+  SMTP_PORT=11025; inbox http://localhost:18025).
+- Next: step 11 (analytics completion: first-response and resolution times, repeat-complaint rate, city and product
+  rates with data coverage, agent and team workload (`/analytics/workload`), day / week / month everywhere, "My stats"
+  for agents: open, SLA at risk, resolved this week).
 
 ## Step log
 
@@ -309,3 +311,33 @@ and committed locally before the next one starts.
   auto-escalation, paused clocks never breach, met / late / reopen, re-target, speed-up, policy CRUD permissions,
   queue filters, analytics, history backfill; + a Kafka integration test of breach → escalation through the broker),
   61 frontend (8 new), Playwright e2e checks the live SLA badge, the policy and "SLA met".
+
+### Step 10 — Notifications ✅
+- Migration `0010`: `notifications` (user, type, title, message, ticket, severity, read_at, emailed_at, email_error;
+  per-user indexes incl. a partial unread index) and `users.email_notifications`.
+- Notification worker: ticket.assigned → the assignee (not on self-assignment; "routed by the rules" vs "assigned by"),
+  ticket.escalated → active Admins except the escalator (critical when the SLA engine escalated), sla.warning → the
+  assignee (unassigned: Admins), sla.breached → Admins + assignee. Inactive users never notified.
+- Consumer framework gained `after_commit(db, fn)`: Redis publish and e-mail run only once the notifications are
+  committed, and their failure never undoes the event.
+- Real time: Redis pub/sub channel per user (namespaced by database), SSE endpoint with `ready` / `notification` /
+  `unread` events and a heartbeat; the browser uses fetch streaming so the token stays in the Authorization header,
+  renews on 401 and reconnects with backoff. Bugs found by tests and fixed: the subscribe confirmation produced a
+  spurious keep-alive straight after `ready`; heartbeats now only after the interval.
+- E-mail: smtplib in a thread after commit, link to the ticket, per-user opt-out, failures recorded; Mailpit service in
+  Compose (SMTP :11025, UI :18025) and `dev.ps1 up` starts it.
+- API: `GET /notifications` (own only, unread filter + count), `POST /notifications/{id}/read` (404 for someone else's),
+  `POST /notifications/read-all`, `GET|PUT /notifications/preferences`, `GET /notifications/stream`; `/auth/me`
+  includes the preference.
+- Frontend: NotificationsProvider in the app shell (one stream per signed-in tab), header bell with unread badge and
+  panel (latest 8, mark all read), toasts (severity by icon + label), Notifications page (all / unread, mark read,
+  e-mail preference, live-connection indicator).
+- Checked by hand on the dev stack with Kafka, `SLA_SPEEDUP=120` and Mailpit: a Critical ticket routed to an agent
+  produced ticket_assigned (agent), sla_warning (agent), sla_breached (admin + agent) and ticket_escalated (admin, by the
+  SLA engine); toasts and the bell updated live in the admin's browser through the Vite proxy; Mailpit received the 4
+  alert e-mails (the assignment correctly not e-mailed). Note for scripted browser checks: the live stream keeps a
+  request open, so `networkidle` never settles — wait for content instead.
+- Tests: 269 backend (13 notification tests: recipients per event, self-actions, inactive users, own-only reads,
+  read-all, preferences, pub/sub publish, SSE generator incl. heartbeat timing, a real uvicorn server streaming with the
+  Bearer header, e-mail sent / opted out / failure recorded), 65 frontend (4 new: SSE parser, live stream → bell +
+  toast, bell panel, Notifications page), Playwright e2e checks the live connection.

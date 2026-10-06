@@ -2,6 +2,7 @@
 
 from app.models.auth import AuditLog, RefreshToken
 from app.models.events import DeadLetter, OutboxEvent, ProcessedEvent
+from app.models.notifications import Notification
 from app.models.org import ROLES, Category, Department, Team, User
 from app.models.retrieval import KnowledgeArticle, TicketEmbedding
 from app.models.sla import SlaEvent, SlaPolicy
@@ -27,6 +28,7 @@ __all__ = [
     "DeadLetter",
     "Department",
     "KnowledgeArticle",
+    "Notification",
     "OutboxEvent",
     "ProcessedEvent",
     "RefreshToken",

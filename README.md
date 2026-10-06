@@ -18,6 +18,7 @@ Satisfaction* dataset (85,907 support records from an Indian e-commerce company)
 | Similar tickets & knowledge base | MiniLM (`all-MiniLM-L6-v2`, 384 dims) on pgvector HNSW **+** PostgreSQL full text, fused by weighted Reciprocal Rank Fusion; 26 seeded help articles; evaluated on fixed examples ([ml/reports/retrieval_report.md](ml/reports/retrieval_report.md)) |
 | Copilot: summary, likely root cause, key issues, next steps, draft reply | OpenAI API with structured outputs (prompt `copilot-v3`), **grounded (RAG)** in the most relevant help articles and similar past tickets plus the ticket's conversation, citing what it used; offline **mock** provider when no key is set; PII masked first (the customer's name is restored locally in the reply); the draft is only posted when an agent accepts it |
 | SLA engine | Policies per priority (+ category), clock from creation, pause while waiting on the customer, warning at 80 % and breach at 100 % once each, automatic escalation, live countdown ([docs/SLA.md](docs/SLA.md)) |
+| Notifications | Notification worker → table → Redis pub/sub → Server-Sent Events: bell, toasts, Notifications page; optional SMTP e-mail (Mailpit locally) ([docs/NOTIFICATIONS.md](docs/NOTIFICATIONS.md)) |
 | Events | Transactional outbox → Kafka (KRaft) → AI, LLM, SLA and notification workers; idempotent consumers, 3 retries, dead-letter queue with Admin replay ([docs/EVENTS.md](docs/EVENTS.md)) |
 | Dashboard | KPIs, daily volume & sentiment trends, category / intent / channel breakdowns, week-over-week emerging issues, open high-priority list, auto-generated insights |
 
@@ -101,7 +102,10 @@ and are renewed automatically from an HttpOnly refresh cookie; reusing an old re
    under **SLA policies**). The badge counts down live (green → amber at 80 % → red when breached, grey while waiting on
    the customer); a breach escalates the ticket automatically. Queue views *SLA at risk* / *SLA breached*; the
    dashboard shows the breach rate. Set `SLA_SPEEDUP=120` to watch a 2-hour SLA lapse in a minute. See [docs/SLA.md](docs/SLA.md).
-10. **My work** — the agent's start page: open tickets by state, highest priority first, and the team's unassigned
+10. **Notifications** — assignments, escalations and SLA warnings / breaches arrive live (bell with an unread count,
+    toasts, the Notifications page) and, for escalations and SLA alerts, by e-mail when SMTP is set
+    (`.\scripts\dev.ps1 up` starts Mailpit: inbox at http://localhost:18025). See [docs/NOTIFICATIONS.md](docs/NOTIFICATIONS.md).
+11. **My work** — the agent's start page: open tickets by state, highest priority first, and the team's unassigned
    backlog.
 
 Permissions follow the spec: agents work on own/team tickets and may reassign within their team; reassigning to
@@ -152,6 +156,7 @@ needs `Authorization: Bearer <access token>`; Admin-only routes return 403 for a
 | GET | `/tickets/{id}/similar` | Similar tickets (hybrid search, scoped to the caller) |
 | GET | `/knowledge/search?q=` or `?ticket_id=` | Knowledge-base search (hybrid) |
 | CRUD | `/knowledge` | Help articles: read for everyone, create / edit / delete for Admins (audited) |
+| GET · POST · PUT | `/notifications`, `/notifications/{id}/read`, `/notifications/read-all`, `/notifications/preferences` · `/notifications/stream` (SSE) | Own notifications, unread count, e-mail preference · live stream |
 | CRUD | `/sla-policies` | SLA targets per priority / category (Admin, audited) |
 | GET | `/analytics/sla` | Breach rate by priority, category, team and over time; open at risk / breached (Admin) |
 | GET · POST | `/admin/events` · `/admin/dlq`, `/admin/dlq/{id}/replay`, `/admin/dlq/{id}/discard` | Event pipeline status · dead-letter queue (Admin) |
@@ -182,7 +187,8 @@ frontend/src/       pages/ (Dashboard, MyWork, Tickets, ReviewQueue, NewTicket, 
                     ActionBar, Conversation, Timeline, CopilotPanel, Retrieval), api/, auth/
 tests/backend/      pytest (AI components, API, auth/permissions, lifecycle, routing, copilot, retrieval, dashboard)
 tests/e2e/          Playwright end-to-end test of the full complaint flow
-docs/               DATA_PROFILE.md, ARCHITECTURE.md, PRIORITY_RULES.md, ROUTING_RULES.md, EVENTS.md, SLA.md
+docs/               DATA_PROFILE.md, ARCHITECTURE.md, PRIORITY_RULES.md, ROUTING_RULES.md, EVENTS.md, SLA.md,
+                    NOTIFICATIONS.md
 scripts/dev.ps1     all developer commands
 ```
 

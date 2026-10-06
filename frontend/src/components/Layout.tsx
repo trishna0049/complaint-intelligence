@@ -1,7 +1,9 @@
 import clsx from "clsx";
-import { Activity, BarChart3, BookOpen, Bot, Briefcase, ClipboardCheck, Inbox, LogOut, Menu, Plus, Shapes, Timer, Users, UsersRound, X } from "lucide-react";
+import { Activity, BarChart3, Bell, BookOpen, Bot, Briefcase, ClipboardCheck, Inbox, LogOut, Menu, Plus, Shapes, Timer, Users, UsersRound, X } from "lucide-react";
 import { useState, type ComponentType } from "react";
 import { NavLink, Outlet } from "react-router-dom";
+import { NotificationBell, Toaster } from "@/components/Notifications";
+import { NotificationsProvider } from "@/notifications/NotificationsProvider";
 import { useHealth } from "@/api/client";
 import type { Role } from "@/api/types";
 import { useAuth } from "@/auth/useAuth";
@@ -25,6 +27,7 @@ const SECTIONS: { title: string; items: NavItem[] }[] = [
       { to: "/review", label: "Review queue", icon: ClipboardCheck, end: true, roles: ["ADMIN"] },
       { to: "/tickets/new", label: "Create ticket", icon: Plus, end: true },
       { to: "/knowledge", label: "Knowledge base", icon: BookOpen },
+      { to: "/notifications", label: "Notifications", icon: Bell, end: true },
     ],
   },
   {
@@ -39,7 +42,16 @@ const SECTIONS: { title: string; items: NavItem[] }[] = [
   },
 ];
 
+/** The signed-in app shell: sidebar, header (bell, user), page, toasts — inside the live notification stream. */
 export function Layout() {
+  return (
+    <NotificationsProvider>
+      <Shell />
+    </NotificationsProvider>
+  );
+}
+
+function Shell() {
   const { user, logout } = useAuth();
   const health = useHealth();
   const [open, setOpen] = useState(false);
@@ -111,6 +123,7 @@ export function Layout() {
           {open ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
         </button>
         <div className="ml-auto flex items-center gap-3">
+          <NotificationBell />
           {user && (
             <div className="flex items-center gap-2" data-testid="user-menu">
               <Avatar name={user.name} size="sm" />
@@ -129,6 +142,7 @@ export function Layout() {
       <main className="mx-auto max-w-[1400px] px-4 py-6 lg:px-6">
         <Outlet />
       </main>
+      <Toaster />
     </div>
   );
 }

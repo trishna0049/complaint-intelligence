@@ -80,6 +80,15 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # Local mail catcher for the optional e-mail alerts: SMTP on localhost:${MAILPIT_SMTP_PORT}, inbox UI on
+  # http://localhost:${MAILPIT_UI_PORT}. Set SMTP_HOST=localhost and SMTP_PORT=${MAILPIT_SMTP_PORT} in .env to use it.
+  mailpit:
+    image: axllent/mailpit:v1.21
+    ports:
+      - "${MAILPIT_SMTP_PORT:-11025}:1025"
+      - "${MAILPIT_UI_PORT:-18025}:8025"
+    restart: unless-stopped
+
 volumes:
   pgdata:
   redisdata:
