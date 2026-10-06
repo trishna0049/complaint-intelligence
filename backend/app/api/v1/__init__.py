@@ -11,7 +11,7 @@ api_router.include_router(tickets.router)
 api_router.include_router(ai.router)
 api_router.include_router(knowledge.router)
 api_router.include_router(analytics.router)
-for _r in (admin.users, admin.teams, admin.departments, admin.categories, admin.audit):
+for _r in (admin.users, admin.teams, admin.departments, admin.categories, admin.audit, admin.events):
     api_router.include_router(_r)
 
 # Routes that work without signing in. Everything else requires a valid access token (enforced by a test).

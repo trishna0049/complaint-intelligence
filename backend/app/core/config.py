@@ -22,6 +22,18 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:16379/0"
     cors_origins: Annotated[list[str], NoDecode] = Field(default_factory=lambda: ["http://localhost:15173"])
 
+    # --- events (Kafka KRaft + transactional outbox, app/events) ---
+    kafka_bootstrap_servers: str = "localhost:19092"
+    # "kafka": API -> outbox -> relay -> Kafka -> workers.  "inline": the same handlers run in the API process right
+    # after the commit (unit tests, demos without a broker).
+    events_mode: Literal["kafka", "inline"] = "kafka"
+    events_prefix: str = "complaints"  # topic and consumer-group prefix (lets e2e share the broker)
+    event_retries: int = 3  # a failing handler is retried this many times, then the event goes to the DLQ
+    event_retry_backoff_seconds: float = 0.5  # doubled after each attempt
+    outbox_poll_seconds: float = 0.5
+    copilot_auto: bool = True  # the LLM worker drafts the copilot answer when triage completes
+    kafka_ui_url: str = "http://localhost:18090"  # linked from the Admin "Event pipeline" page
+
     # --- auth ---
     # Signing key for access tokens. The default only works outside production (see `check_production`).
     jwt_secret: str = "dev-only-insecure-jwt-secret-change-me"

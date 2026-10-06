@@ -1,6 +1,8 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
   Analysis,
+  DeadLetter,
+  PipelineStatus,
   Article,
   ArticleHit,
   ArticleInput,
@@ -51,8 +53,18 @@ export const useEmerging = () =>
 export const useTickets = (query: Query) =>
   useQuery({ queryKey: ["tickets", query], queryFn: () => api<Page<Ticket>>("/tickets", { query }), ...keep });
 
+/** While the AI worker triages or the LLM worker drafts, the ticket is refreshed every 1.5 s (for at most 3 min). */
 export const useTicket = (id: number) =>
-  useQuery({ queryKey: ["ticket", id], queryFn: () => api<TicketDetail>(`/tickets/${id}`), enabled: Number.isFinite(id) });
+  useQuery({
+    queryKey: ["ticket", id],
+    queryFn: () => api<TicketDetail>(`/tickets/${id}`),
+    enabled: Number.isFinite(id),
+    refetchInterval: (query) => {
+      const t = query.state.data;
+      const working = t && (t.pipeline?.triage === "pending" || t.pipeline?.copilot === "drafting");
+      return working && Date.now() - new Date(t.created_at).getTime() < 180_000 ? 1500 : false;
+    },
+  });
 
 export const useHealth = () =>
   useQuery({ queryKey: ["health"], queryFn: () => api<{ classifier: string | null; sentiment_model: string; llm_provider: string }>("/health"), staleTime: 60_000 });
@@ -170,12 +182,14 @@ export const useDiscardDraft = (ticketId: number) =>
     api<TicketDetail>(`/ai/drafts/${analysisId}/discard`, { method: "POST", body: { reason } }));
 
 // ------------------------------------------------------------------ retrieval: similar tickets, knowledge base
-export const useSimilarTickets = (id: number) =>
-  useQuery({ queryKey: ["similar", id], queryFn: () => api<SimilarTicket[]>(`/tickets/${id}/similar`), staleTime: 60_000 });
+/** `version` changes when the AI worker finishes (triage state + category), so results computed while the ticket
+ * was still NEW — no category boost, no stored embedding — are fetched again. */
+export const useSimilarTickets = (id: number, version = "") =>
+  useQuery({ queryKey: ["similar", id, version], queryFn: () => api<SimilarTicket[]>(`/tickets/${id}/similar`), staleTime: 60_000 });
 
-export const useTicketArticles = (id: number) =>
+export const useTicketArticles = (id: number, version = "") =>
   useQuery({
-    queryKey: ["ticket-articles", id],
+    queryKey: ["ticket-articles", id, version],
     queryFn: () => api<ArticleHit[]>("/knowledge/search", { query: { ticket_id: id, limit: 3 } }),
     staleTime: 60_000,
   });
@@ -212,6 +226,31 @@ export const useUpdateArticle = (id: number) =>
   useArticleChange((body: Partial<ArticleInput>) => api<Article>(`/knowledge/${id}`, { method: "PATCH", body }));
 export const useDeleteArticle = (id: number) =>
   useArticleChange(() => api<undefined>(`/knowledge/${id}`, { method: "DELETE" }));
+
+// ------------------------------------------------------------------ admin: event pipeline and DLQ
+export const usePipelineStatus = () =>
+  useQuery({ queryKey: ["pipeline"], queryFn: () => api<PipelineStatus>("/admin/events"), refetchInterval: 5000 });
+
+export const useDeadLetters = (status: "waiting" | "replayed" | "discarded") =>
+  useQuery({
+    queryKey: ["dlq", status],
+    queryFn: () => api<Page<DeadLetter>>("/admin/dlq", { query: { status, page_size: 100 } }),
+    refetchInterval: 5000,
+  });
+
+function useDlqAction(path: (id: number) => string, body?: unknown) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => api<DeadLetter>(path(id), { method: "POST", body }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["dlq"] });
+      void qc.invalidateQueries({ queryKey: ["pipeline"] });
+    },
+  });
+}
+
+export const useReplayDeadLetter = () => useDlqAction((id) => `/admin/dlq/${id}/replay`);
+export const useDiscardDeadLetter = () => useDlqAction((id) => `/admin/dlq/${id}/discard`, {});
 
 // ------------------------------------------------------------------ admin: users, teams, departments, categories
 export const useUsers = (query: Query) =>

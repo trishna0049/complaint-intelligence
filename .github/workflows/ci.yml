@@ -12,6 +12,7 @@ jobs:
       ENABLE_TRANSFORMERS: "false"   # tests use the lexicon fallback; no model download in CI
       TEST_DATABASE_URL: postgresql+asyncpg://complaint:complaint_ci_pw@localhost:5432/complaints_test
       REDIS_URL: redis://localhost:6379/15
+      KAFKA_BOOTSTRAP_SERVERS: localhost:9092  # test_kafka_integration.py runs against the service below
     services:
       postgres:
         image: pgvector/pgvector:pg16
@@ -27,6 +28,26 @@ jobs:
         image: redis:7.4-alpine
         ports: ["6379:6379"]
         options: --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 20
+      kafka:
+        image: apache/kafka:3.9.1
+        env:
+          CLUSTER_ID: cmpl-intel-ci-kraft-01
+          KAFKA_NODE_ID: "1"
+          KAFKA_PROCESS_ROLES: broker,controller
+          KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+          KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+          KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+          KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+          KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+          KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+          KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+          KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+          KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: "0"
+          KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+        ports: ["9092:9092"]
+        options: >-
+          --health-cmd "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092"
+          --health-interval 10s --health-timeout 10s --health-retries 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

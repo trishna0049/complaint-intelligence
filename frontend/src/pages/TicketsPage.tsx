@@ -3,7 +3,7 @@ import { ChevronLeft, ChevronRight, FileText, Plus, Search, Sparkles, X } from "
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useCategories, useTeams, useTickets } from "@/api/client";
-import { PriorityBadge, SentimentBadge, StatusBadge } from "@/components/Badges";
+import { TicketPriority, SentimentBadge, StatusBadge } from "@/components/Badges";
 import { Avatar, Badge, Button, Card, EmptyState, ErrorState, Input, PageHeader, Select, Skeleton } from "@/components/ui";
 import { useAuth } from "@/auth/useAuth";
 import { SENTIMENTS } from "@/lib/colors";
@@ -157,7 +157,7 @@ export function TicketsPage() {
                         <p className="truncate text-xs text-slate-500">{t.intent}</p>
                       </td>
                       <td><SentimentBadge sentiment={t.sentiment} /></td>
-                      <td><PriorityBadge priority={t.priority} /></td>
+                      <td><TicketPriority priority={t.priority} status={t.status} /></td>
                       <td><StatusBadge status={t.status} /></td>
                       <td className="max-w-[180px]">
                         {t.assignee ? (

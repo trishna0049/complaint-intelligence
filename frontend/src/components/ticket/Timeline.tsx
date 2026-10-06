@@ -69,7 +69,7 @@ function describe(e: TimelineEvent): { icon: ReactNode; text: ReactNode; detail?
     case "copilot_generated":
       return {
         icon: <Bot className="h-3.5 w-3.5 text-violet-500" />,
-        text: <><b>{who}</b> {m.regenerated ? "regenerated the AI draft" : "ran the AI copilot"}</>,
+        text: m.auto ? <><b>LLM worker</b> drafted the copilot answer</> : <><b>{who}</b> {m.regenerated ? "regenerated the AI draft" : "ran the AI copilot"}</>,
         detail: [str(m.model), str(m.prompt_version)].filter(Boolean).join(" · ") || undefined,
       };
     case "copilot_accepted":

@@ -29,6 +29,7 @@ CHARGED = {"description": "I was charged twice for my order and the money was de
 def _loose_threshold(monkeypatch):
     # Hashing vectors score lower than MiniLM's; the rule (drop weak vector matches) is tested separately below.
     monkeypatch.setattr(get_settings(), "similar_min_score", 0.05)
+    monkeypatch.setattr(get_settings(), "article_min_score", 0.05)
 
 
 @pytest.fixture
@@ -259,3 +260,21 @@ async def test_unknown_citations_from_the_model_are_ignored(client, org, kb, mon
     t = await create(client, CHARGED)
     a = (await client.post("/api/v1/ai/draft-response", json={"ticket_id": t["id"]})).json()
     assert [g["ref"] for g in a["grounding"] if g["cited"]] == ["A1"]
+
+
+async def test_whole_complaints_dont_pull_in_keyword_only_articles(client, kb, monkeypatch):
+    """Typed queries keep keyword-only hits (exact terms); a ticket's whole text only re-ranks meaning matches."""
+    from app.repositories import retrieval as repo
+    from app.services import retrieval
+
+    async def no_vectors(*args, **kwargs):
+        return []
+
+    monkeypatch.setattr(repo, "nearest_articles", no_vectors)
+    t = await create(client, {"description": "OTP not received when I try to log in"})
+    async with SessionLocal() as db:
+        ticket = await db.get(Ticket, t["id"])
+        assert [h.article.title for h in await retrieval.search_articles(db, "OTP not received", limit=1)] == [
+            "OTP not received"
+        ]
+        assert await retrieval.articles_for_ticket(db, ticket) == []

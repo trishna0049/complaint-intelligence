@@ -13,7 +13,7 @@ Rules enforced here (the API layer only parses and serialises):
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fastapi import HTTPException, UploadFile, status
@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.priority import BASE_PRIORITY, decide_priority
 from app.ai.triage import TriageResult, triage
+from app.core.config import get_settings
 from app.domain.lifecycle import (
     DONE_STATUSES,
     OPEN_STATUSES,
@@ -32,12 +33,13 @@ from app.domain.lifecycle import (
     allowed_actions,
     next_status,
 )
+from app.events import bus
 from app.models import AIAnalysis, Customer, Ticket, TicketAttachment, TicketComment, User
 from app.repositories import routing as routing_repo
 from app.repositories import tickets as repo
 from app.repositories import users as users_repo
 from app.schemas.tickets import TicketCreate, TicketUpdate
-from app.services import retrieval, routing, storage
+from app.services import retrieval, routing, storage, timeline
 from app.services.analytics import invalidate_cache
 
 # ------------------------------------------------------------------------------------------------ helpers
@@ -173,7 +175,8 @@ async def _load_for_change(db: AsyncSession, user: User, ticket_id: int, action:
 
 
 def record_event(db: AsyncSession, t: Ticket, event_type: str, actor: User | None, **metadata: Any) -> None:
-    repo.add_event(db, t.id, event_type, actor.id if actor else None, metadata)
+    """Timeline row + the matching Kafka events (outbox), in the caller's transaction."""
+    timeline.record(db, t, event_type, actor, **metadata)
 
 
 def _status_change(db: AsyncSession, t: Ticket, new: Status, actor: User | None, action: Action, **meta: Any) -> None:
@@ -184,9 +187,11 @@ def _status_change(db: AsyncSession, t: Ticket, new: Status, actor: User | None,
 
 
 async def commit(db: AsyncSession) -> None:
-    """Commit a ticket change (with its events and audit rows) and invalidate the cached analytics."""
+    """Commit a ticket change (with its timeline, outbox events and audit rows), invalidate the cached analytics
+    and, in inline mode, run the event handlers now."""
     await db.commit()
     await invalidate_cache()
+    await bus.after_commit()
 
 
 # ------------------------------------------------------------------------------------------------ triage + create
@@ -241,7 +246,8 @@ async def _customer_for(db: AsyncSession, data: TicketCreate) -> Customer | None
 
 
 async def create_ticket(db: AsyncSession, user: User, data: TicketCreate) -> Ticket:
-    result = await run_triage(data)
+    """Save the ticket (NEW) and its ticket.created event in one transaction and return at once — triage, routing
+    and embedding happen in the AI worker (in inline mode: right after the commit, before this returns)."""
     customer = await _customer_for(db, data)
     t = Ticket(
         source="new",
@@ -251,15 +257,32 @@ async def create_ticket(db: AsyncSession, user: User, data: TicketCreate) -> Tic
         channel=data.channel,
         customer_id=customer.id if customer else None,
         customer_name=customer.name if customer else None,
-        order_id=data.order_id or (result.entities["order_ids"][0] if result.entities["order_ids"] else None),
+        order_id=data.order_id,
         product=data.product,
-        amount_inr=data.amount_inr if data.amount_inr is not None else result.entities["max_amount_inr"],
+        amount_inr=data.amount_inr,
         city=data.city,
         status=Status.NEW.value,
         created_by_id=user.id,
     )
     await repo.add(db, t)
     record_event(db, t, "created", user, channel=t.channel)
+    await commit(db)
+    return await get_ticket(db, user, t.id)
+
+
+async def triage_ticket(db: AsyncSession, ticket_id: int) -> Ticket | None:
+    """AI worker, on ticket.created: NLP triage, the rules' routing and the embedding — one transaction (committed
+    by the consumer framework together with its idempotency record). Emits ai.analysis.completed (+ ticket.assigned)."""
+    t = await repo.get(db, ticket_id, for_update=True)
+    if t is None or t.status != Status.NEW:
+        return t  # deleted, or already triaged (e.g. by an earlier delivery)
+    result = await asyncio.to_thread(
+        triage, t.description, channel=t.channel, product=t.product, amount_inr=t.amount_inr, order_id=t.order_id
+    )
+    if not t.order_id and result.entities["order_ids"]:
+        t.order_id = result.entities["order_ids"][0]
+    if t.amount_inr is None:
+        t.amount_inr = result.entities["max_amount_inr"]
     apply_triage(t, result)
     await repo.add_analysis(db, triage_analysis(t, result.top_categories))
     t.status = next_status(t.status, Action.TRIAGE).value
@@ -280,8 +303,7 @@ async def create_ticket(db: AsyncSession, user: User, data: TicketCreate) -> Tic
     await routing.route(db, t, trigger="triage")
     # Searchable by meaning straight away (similar tickets, copilot grounding).
     await retrieval.embed_ticket(db, t)
-    await commit(db)
-    return await get_ticket(db, user, t.id)
+    return t
 
 
 # ------------------------------------------------------------------------------------------------ reads
@@ -323,7 +345,29 @@ async def detail_bundle(db: AsyncSession, user: User, t: Ticket) -> dict[str, An
         "previous_tickets": previous,
         "copilot": latest_copilot(t),
         "allowed_actions": actions_for(user, t),
+        "pipeline": await pipeline_state(db, t),
     }
+
+
+async def pipeline_state(db: AsyncSession, t: Ticket) -> dict[str, str]:
+    """Where the background work for this ticket stands, so the workspace can say "AI triage running…" and refresh.
+    triage: pending | done | failed;  copilot: ready | drafting | failed | manual (run it by hand)."""
+    failed = await repo.waiting_dead_letter_consumers(db, t.id)
+    triage_state = "done" if t.status != Status.NEW else ("failed" if "ai-worker" in failed else "pending")
+    if latest_copilot(t) is not None:
+        copilot_state = "ready"
+    elif "llm-worker" in failed:
+        copilot_state = "failed"
+    elif (
+        get_settings().copilot_auto
+        and t.source == "new"
+        and triage_state != "failed"
+        and _now() - t.created_at < timedelta(minutes=15)
+    ):
+        copilot_state = "drafting"
+    else:
+        copilot_state = "manual"
+    return {"triage": triage_state, "copilot": copilot_state}
 
 
 def _historical_timeline(t: Ticket) -> list[dict[str, Any]]:

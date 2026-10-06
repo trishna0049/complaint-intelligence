@@ -3,7 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { useTicketSummary, useTickets } from "@/api/client";
 import type { Status } from "@/api/types";
 import { useAuth } from "@/auth/useAuth";
-import { PriorityBadge, StatusBadge } from "@/components/Badges";
+import { TicketPriority, StatusBadge } from "@/components/Badges";
 import { Button, Card, CardHeader, EmptyState, ErrorState, PageHeader, Skeleton } from "@/components/ui";
 import { fmtRelative } from "@/lib/format";
 import { statusLabel } from "@/lib/status";
@@ -56,7 +56,7 @@ export function MyWorkPage() {
                       <p className="mt-0.5 truncate text-sm font-medium text-slate-900">{t.subject}</p>
                       <p className="text-xs text-slate-500">{t.category ?? "Uncategorised"} · updated {fmtRelative(t.updated_at)}</p>
                     </div>
-                    <PriorityBadge priority={t.priority} />
+                    <TicketPriority priority={t.priority} status={t.status} />
                   </button>
                 </li>
               ))}

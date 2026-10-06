@@ -1,5 +1,6 @@
 /**
- * The core user flow: dashboard → create ticket → AI triage preview → save → AI copilot →
+ * The core user flow on the real event pipeline (Kafka KRaft, outbox relay, AI / LLM / SLA / notification workers):
+ * dashboard → create ticket → AI triage preview → save (instant, status NEW) → the AI worker triages → AI copilot →
  * routed by the rules to a Payments Support agent → find it in the ticket list and on the dashboard → reassign →
  * start → comment + attachment → resolve → close, with every step on the ticket timeline.
  */
@@ -33,11 +34,13 @@ test("ticket is triaged, summarised, tracked on the dashboard and resolved", asy
   await expect(preview.getByText("₹12,500", { exact: true })).toBeVisible();
   await expect(preview.getByText("Repeat contact", { exact: true })).toBeVisible();
 
-  // 3. Save: the detail page shows the stored triage with every priority rule that matched.
+  // 3. Save: the ticket is stored at once (NEW) and the AI worker triages it through Kafka; the page refreshes
+  // itself and then shows the stored triage with every priority rule that matched.
   await page.getByRole("button", { name: "Create ticket" }).click();
   await expect(page).toHaveURL(/\/tickets\/\d+$/);
   const ticketUrl = page.url();
   await expect(page.getByRole("heading", { name: subject })).toBeVisible();
+  await expect(page.getByText(/The AI worker is triaging this ticket/)).toBeHidden();
   await expect(page.getByText("Very negative sentiment")).toBeVisible();
   await expect(page.getByText("already Critical").first()).toBeVisible();
 
@@ -51,9 +54,12 @@ test("ticket is triaged, summarised, tracked on the dashboard and resolved", asy
   const help = page.getByRole("list", { name: "Help articles" });
   await expect(help.getByRole("link").first()).toContainText("Duplicate or double payment for one order");
 
-  // 4. AI copilot (mock provider): summary, key issues, recommended actions, draft reply — grounded in the KB.
-  await page.getByRole("button", { name: "Run copilot" }).click();
+  // 4. AI copilot (mock provider): the LLM worker drafted it after triage — summary, key issues, recommended
+  // actions, draft reply, grounded in the KB. Then the agent regenerates it by hand.
   await expect(page.getByRole("heading", { name: "Recommended actions" })).toBeVisible();
+  await expect(timeline).toContainText("LLM worker drafted the copilot answer");
+  await page.getByRole("button", { name: "Regenerate" }).click();
+  await expect(timeline).toContainText("regenerated the AI draft");
   await expect(page.getByText(/^Customer reports a payment problem/)).toBeVisible();
   await expect(page.getByText(/Mock LLM · mock-copilot-v3 · copilot-v3/)).toBeVisible();
   await expect(page.getByText("Amount involved: ₹12,500")).toBeVisible();
@@ -126,7 +132,7 @@ test("ticket is triaged, summarised, tracked on the dashboard and resolved", asy
   await actions.getByRole("button", { name: "Close" }).click();
   await expect(actions.getByRole("button", { name: "Reopen" })).toBeVisible();
 
-  for (const text of ["created the ticket", "AI triage: Payments related", "Routing rules: assigned to", "ran the AI copilot",
+  for (const text of ["created the ticket", "AI triage: Payments related", "Routing rules: assigned to", "LLM worker drafted",
     "accepted the AI draft after editing it", "assigned it to",
     "to In progress", "commented",
     "attached statement.txt", "to Resolved", "to Closed"]) {

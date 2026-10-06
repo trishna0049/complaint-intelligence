@@ -1,4 +1,4 @@
-import { AlertOctagon, ArrowDown, ArrowUp, Minus } from "lucide-react";
+import { AlertOctagon, ArrowDown, ArrowUp, Loader2, Minus } from "lucide-react";
 import type { Priority, Status } from "@/api/types";
 import { Badge, type Tone } from "@/components/ui";
 import { SENTIMENT_COLORS } from "@/lib/colors";
@@ -10,6 +10,18 @@ const PRIORITY: Record<Priority, { tone: Tone; icon: typeof ArrowUp }> = {
   Medium: { tone: "blue", icon: Minus },
   Low: { tone: "slate", icon: ArrowDown },
 };
+
+/** Priority, or "Triaging…" while the AI worker hasn't triaged the ticket yet (status NEW). */
+export function TicketPriority({ priority, status }: { priority: Priority; status: Status }) {
+  if (status === "NEW") {
+    return (
+      <Badge tone="violet" title="The AI worker is triaging this ticket">
+        <Loader2 className="h-3 w-3 animate-spin" aria-hidden /> Triaging…
+      </Badge>
+    );
+  }
+  return <PriorityBadge priority={priority} />;
+}
 
 export function PriorityBadge({ priority }: { priority: Priority }) {
   const p = PRIORITY[priority] ?? PRIORITY.Medium;

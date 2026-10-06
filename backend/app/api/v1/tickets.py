@@ -50,6 +50,7 @@ async def to_detail(db: AsyncSession, user: User, t: Ticket) -> TicketDetail:
     detail.previous_tickets = [PreviousTicket.model_validate(p) for p in bundle["previous_tickets"]]
     detail.allowed_actions = bundle["allowed_actions"]
     detail.can_view = svc.can_view(user, t)
+    detail.pipeline = bundle["pipeline"]
     return detail
 
 

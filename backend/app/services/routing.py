@@ -16,8 +16,8 @@ from app.domain.lifecycle import Action, Status, next_status
 from app.domain.routing import Decision, Outcome, decide
 from app.models import Ticket, User
 from app.repositories import routing as repo
-from app.repositories import tickets as tickets_repo
 from app.repositories import users as users_repo
+from app.services import timeline
 
 
 def _now() -> datetime:
@@ -44,12 +44,8 @@ def _move(db: AsyncSession, t: Ticket, action: Action, actor: User | None, trigg
     if new.value == t.status:
         return
     old, t.status = t.status, new.value
-    tickets_repo.add_event(
-        db,
-        t.id,
-        "status_changed",
-        actor.id if actor else None,
-        {"from": old, "to": new.value, "action": action.value, "trigger": trigger},
+    timeline.record(
+        db, t, "status_changed", actor, **{"from": old, "to": new.value, "action": action.value, "trigger": trigger}
     )
 
 
@@ -58,12 +54,12 @@ async def route(db: AsyncSession, t: Ticket, *, actor: User | None = None, trigg
     d = await decide_for(db, t)
     previous = {"assignee_id": t.assignee_id, "team_id": t.team_id}
     # The decision first, then the moves it causes (the timeline reads in that order).
-    tickets_repo.add_event(
+    timeline.record(
         db,
-        t.id,
+        t,
         "routed",
-        actor.id if actor else None,
-        {
+        actor,
+        **{
             "outcome": d.outcome.value,
             "rule": d.rule.value,
             "reason": d.reason,

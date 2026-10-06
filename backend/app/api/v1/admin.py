@@ -28,7 +28,9 @@ from app.schemas.auth import (
     UserUpdate,
 )
 from app.schemas.common import Page
+from app.schemas.events import DeadLetterOut, DiscardRequest, PipelineStatus
 from app.services import admin as svc
+from app.services import events_admin as events_svc
 
 Db = Depends(get_session)
 
@@ -145,3 +147,41 @@ async def list_audit_logs(
     _: AdminUser, db: AsyncSession = Db, limit: int = Query(default=100, ge=1, le=500)
 ) -> list[AuditOut]:
     return [AuditOut.model_validate(a) for a in await users_repo.list_audit(db, limit=limit)]
+
+
+# ------------------------------------------------------------------------------------------------ events / DLQ
+events = APIRouter(prefix="/admin", tags=["admin: events"])
+
+
+@events.get("/events", response_model=PipelineStatus)
+async def pipeline_status(_: AdminUser, db: AsyncSession = Db) -> PipelineStatus:
+    """Outbox lag, events processed per worker and dead letters waiting."""
+    return PipelineStatus.model_validate(await events_svc.pipeline_status(db))
+
+
+@events.get("/dlq", response_model=Page[DeadLetterOut])
+async def list_dead_letters(
+    _: AdminUser,
+    db: AsyncSession = Db,
+    status: str | None = Query(default="waiting", pattern="^(waiting|replayed|discarded)$"),
+    consumer: str | None = Query(default=None, max_length=48),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=25, ge=1, le=100),
+) -> Page[DeadLetterOut]:
+    items, total = await events_svc.list_dead_letters(
+        db, state=status, consumer=consumer, page=page, page_size=page_size
+    )
+    return Page(items=[DeadLetterOut.model_validate(d) for d in items], total=total, page=page, page_size=page_size)
+
+
+@events.post("/dlq/{letter_id}/replay", response_model=DeadLetterOut)
+async def replay_dead_letter(letter_id: int, admin: AdminUser, db: AsyncSession = Db) -> DeadLetterOut:
+    """Publish the event again (same event id): only the consumer that failed processes it."""
+    return DeadLetterOut.model_validate(await events_svc.replay(db, admin, letter_id))
+
+
+@events.post("/dlq/{letter_id}/discard", response_model=DeadLetterOut)
+async def discard_dead_letter(
+    letter_id: int, body: DiscardRequest, admin: AdminUser, db: AsyncSession = Db
+) -> DeadLetterOut:
+    return DeadLetterOut.model_validate(await events_svc.discard(db, admin, letter_id, body.reason))

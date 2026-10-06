@@ -77,9 +77,10 @@ switch ($Command) {
     }
 
     "up" {
-        Compose @("up", "-d", "postgres", "redis")
-        Wait-Healthy "postgres"; Wait-Healthy "redis"
+        Compose @("up", "-d", "postgres", "redis", "kafka", "kafka-ui")
+        Wait-Healthy "postgres"; Wait-Healthy "redis"; Wait-Healthy "kafka"
         Write-Host "Postgres on localhost:$(EnvValue 'POSTGRES_PORT' '15432'), Redis on localhost:$(EnvValue 'REDIS_PORT' '16379')" -ForegroundColor Cyan
+        Write-Host "Kafka on localhost:$(EnvValue 'KAFKA_PORT' '19092'), Kafka UI on http://localhost:$(EnvValue 'KAFKA_UI_PORT' '18090')" -ForegroundColor Cyan
     }
 
     "down" { Compose (@("down") + $Rest) }
@@ -134,12 +135,28 @@ switch ($Command) {
 
     "web" { Run "npm" @("run", "dev") (Join-Path $Root "frontend") }
 
+    "topics" {
+        # Create the Kafka topics for EVENTS_PREFIX (idempotent; add --reset to delete and recreate them).
+        Need-Venv
+        Run $Py (@("-m", "app.workers.run", "topics") + $Rest) (Join-Path $Root "backend")
+    }
+
+    "workers" {
+        # Outbox relay + AI, LLM, SLA and notification workers (Kafka). One process; or pass a single name:
+        # .\scripts\dev.ps1 workers ai | llm | sla | notification | relay
+        Need-Venv
+        $what = if ($Rest) { $Rest } else { @("all") }
+        Run $Py (@("-m", "app.workers.run") + $what) (Join-Path $Root "backend")
+    }
+
     "start" {
         Need-Venv
+        Run $Py @("-m", "app.workers.run", "topics") (Join-Path $Root "backend")
         Start-Process powershell -ArgumentList "-NoExit", "-File", "`"$PSCommandPath`"", "api"
+        Start-Process powershell -ArgumentList "-NoExit", "-File", "`"$PSCommandPath`"", "workers"
         Start-Process powershell -ArgumentList "-NoExit", "-File", "`"$PSCommandPath`"", "web"
         $web = EnvValue "WEB_PORT" "15173"
-        Write-Host "API: http://localhost:$(EnvValue 'API_PORT' '18000')/docs   App: http://localhost:$web" -ForegroundColor Cyan
+        Write-Host "API: http://localhost:$(EnvValue 'API_PORT' '18000')/docs   App: http://localhost:$web   Kafka UI: http://localhost:$(EnvValue 'KAFKA_UI_PORT' '18090')" -ForegroundColor Cyan
     }
 
     "test" {
@@ -173,14 +190,16 @@ switch ($Command) {
 Usage: .\scripts\dev.ps1 <command>
 
   setup      Create .env, Python venv (backend\.venv) and install all dependencies
-  up | down  Start / stop Postgres (pgvector) + Redis in Docker (down -v also deletes the data)
+  up | down  Start / stop Postgres (pgvector), Redis, Kafka (KRaft) and Kafka UI in Docker (down -v deletes the data)
   migrate    Create the database if needed and apply the Alembic migrations
   train      Profile the dataset, train category/intent classifiers, validate the sentiment model
   seed       Teams, categories, admin, the 1,371 dataset agents and the knowledge base (idempotent; prints logins)
   import     Load data\ecommerce_support.csv into Postgres (idempotent, batched)
   embed      Embed tickets for similar-ticket search (MiniLM; run after import, idempotent)
   eval-retrieval  Retrieval evaluation on fixed examples (needs seed) -> ml\reports\retrieval_report.md
-  start      Start the API and the web app in two new windows
+  start      Create the Kafka topics, then start the API, the workers and the web app in three new windows
+  workers    Outbox relay + the AI, LLM, SLA and notification workers (or one: workers ai|llm|sla|notification|relay)
+  topics     Create the Kafka topics (topics --reset deletes and recreates them)
   api | web  Start only the API (uvicorn --reload) or only the Vite dev server
   test       Backend (pytest) + frontend (Vitest) tests
   e2e        Playwright end-to-end test of the full complaint flow (own servers + database)

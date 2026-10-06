@@ -25,6 +25,11 @@ os.environ["ENVIRONMENT"] = "test"
 os.environ["ENABLE_TRANSFORMERS"] = "false"
 os.environ["LLM_PROVIDER"] = "mock"
 os.environ["OPENAI_API_KEY"] = ""
+# Events run in-process right after each commit (same consumers, idempotency, retries and DLQ as with Kafka);
+# the Kafka path itself is covered by test_kafka_integration.py.
+os.environ["EVENTS_MODE"] = "inline"
+os.environ["EVENT_RETRY_BACKOFF_SECONDS"] = "0"
+os.environ["COPILOT_AUTO"] = "false"  # tests that want the LLM worker's auto-draft switch it on
 os.environ.setdefault("REDIS_URL", (_env.get("REDIS_URL") or "redis://localhost:16379/0").rsplit("/", 1)[0] + "/15")
 
 import httpx  # noqa: E402

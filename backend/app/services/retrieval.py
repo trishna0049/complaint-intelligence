@@ -15,6 +15,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Literal
 
+from sqlalchemy import true
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.embeddings import embed, get_embedder, ticket_text, worth_embedding
@@ -101,14 +102,15 @@ class SimilarTicket:
     hit: Hit
 
 
-async def similar_tickets(db: AsyncSession, user: User, t: Ticket, *, limit: int = 5) -> list[SimilarTicket]:
+async def similar_tickets(db: AsyncSession, user: User | None, t: Ticket, *, limit: int = 5) -> list[SimilarTicket]:
+    """`user` None = a system run (the LLM worker): limited to the ticket's own team, like its agents would see."""
     from app.services.tickets import visibility_clause  # local: tickets imports this module
 
     s = get_settings()
     model = get_embedder().name
     text = ticket_text(t.subject if t.source == "new" else None, t.description)
     vector = await repo.ticket_vector(db, t.id, model) or await _vector_for([text])
-    clause = visibility_clause(user)
+    clause = visibility_clause(user) if user else (Ticket.team_id == t.team_id if t.team_id else true())
     near = await repo.nearest_tickets(db, vector, model, visible=clause, exclude_id=t.id, limit=CANDIDATES)
     words = await repo.keyword_tickets(db, text, visible=clause, exclude_id=t.id, limit=CANDIDATES)
     hits = fuse(
@@ -146,6 +148,7 @@ async def search_articles(
     category: str | None = None,
     boost_category: str | None = None,
     limit: int = 5,
+    keyword_only_top: int = ARTICLE_KEYWORD_ONLY,
 ) -> list[ArticleHit]:
     """`category` filters (Knowledge Base page); `boost_category` only nudges (articles for a ticket)."""
     s = get_settings()
@@ -163,7 +166,7 @@ async def search_articles(
         words,
         k=s.rrf_k,
         min_similarity=s.article_min_score,
-        keyword_only_top=ARTICLE_KEYWORD_ONLY,
+        keyword_only_top=keyword_only_top,
         keyword_weight=s.keyword_weight,
         boost=boost,
     )[:limit]
@@ -173,4 +176,6 @@ async def search_articles(
 
 async def articles_for_ticket(db: AsyncSession, t: Ticket, *, limit: int = 3) -> list[ArticleHit]:
     text = ticket_text(t.subject if t.source == "new" else None, t.description)
-    return await search_articles(db, text, boost_category=t.category, limit=limit)
+    # A whole complaint as the query shares generic words ("order", "days") with many articles: keywords only
+    # re-rank articles found by meaning here, they don't add new ones.
+    return await search_articles(db, text, boost_category=t.category, limit=limit, keyword_only_top=0)

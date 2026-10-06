@@ -1,16 +1,16 @@
-import { ArrowLeft, Check, FileText, Route, ShieldQuestion, Sparkles, UserRound, Users } from "lucide-react";
+import { ArrowLeft, Loader2, Check, FileText, Route, ShieldQuestion, Sparkles, UserRound, Users } from "lucide-react";
 import { Link, useParams } from "react-router-dom";
 import { ApiError } from "@/api/http";
 import { useCategories, useTicket, useUpdateTicket } from "@/api/client";
 import type { TicketDetail } from "@/api/types";
-import { PriorityBadge, StatusBadge } from "@/components/Badges";
+import { StatusBadge, TicketPriority } from "@/components/Badges";
 import { ActionBar } from "@/components/ticket/ActionBar";
 import { CopilotPanel } from "@/components/ticket/CopilotPanel";
 import { Conversation } from "@/components/ticket/Conversation";
 import { HelpArticles, SimilarTickets } from "@/components/ticket/Retrieval";
 import { Timeline } from "@/components/ticket/Timeline";
 import { TriageView } from "@/components/TriageView";
-import { Avatar, Badge, Button, Card, CardHeader, EmptyState, ErrorState, LoadingState, Select } from "@/components/ui";
+import { Avatar, Badge, Button, Card, CardHeader, EmptyState, ErrorState, LoadingState, Select, Skeleton } from "@/components/ui";
 import { fmtDate, fmtDateTime, fmtInr, fmtRelative } from "@/lib/format";
 
 export function TicketDetailPage() {
@@ -45,7 +45,7 @@ export function TicketDetailPage() {
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-mono text-sm text-slate-500">{t.ticket_number}</span>
             <StatusBadge status={t.status} />
-            <PriorityBadge priority={t.priority} />
+            <TicketPriority priority={t.priority} status={t.status} />
             {t.needs_review && <Badge tone="violet"><Sparkles className="h-3 w-3" /> Needs review</Badge>}
             {t.reopen_count > 0 && <Badge tone="amber">Reopened ×{t.reopen_count}</Badge>}
           </div>
@@ -79,10 +79,25 @@ export function TicketDetailPage() {
                 t.model_version ?? undefined}
             />
             <div className="p-4">
+              {t.pipeline.triage === "failed" ? (
+                <p className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800" role="alert">
+                  Automatic triage failed after its retries and is waiting in the dead-letter queue. An Admin can replay
+                  it from <b>Event pipeline</b>.
+                </p>
+              ) : t.pipeline.triage === "pending" ? (
+                <div className="space-y-2" role="status">
+                  <p className="flex items-center gap-2 text-sm text-slate-600">
+                    <Loader2 className="h-4 w-4 animate-spin text-violet-500" /> The AI worker is triaging this ticket —
+                    category, sentiment, entities, priority and routing appear in a moment.
+                  </p>
+                  <Skeleton className="h-12" />
+                </div>
+              ) : (
               <TriageView category={t.category} categoryConfidence={t.labels_from === "model" ? t.category_confidence : null}
                 intent={t.intent} intentConfidence={t.labels_from === "model" ? t.intent_confidence : null}
                 sentiment={t.sentiment} sentimentScore={t.sentiment_score} priority={t.priority} reasons={t.priority_reasons} entities={t.entities} />
-              {!done && t.allowed_actions.length > 0 && <CategoryCorrection ticket={t} />}
+              )}
+              {!done && t.status !== "NEW" && t.allowed_actions.length > 0 && <CategoryCorrection ticket={t} />}
             </div>
           </Card>
 
@@ -120,8 +135,8 @@ export function TicketDetailPage() {
           </Card>
 
           <CustomerCard ticket={t} />
-          <HelpArticles ticketId={t.id} />
-          <SimilarTickets ticketId={t.id} />
+          <HelpArticles ticketId={t.id} version={`${t.pipeline.triage}:${t.category ?? ""}`} />
+          <SimilarTickets ticketId={t.id} version={`${t.pipeline.triage}:${t.category ?? ""}`} />
 
           <Card>
             <CardHeader title="Details" />

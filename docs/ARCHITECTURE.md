@@ -1,8 +1,9 @@
 # Architecture
 
-One FastAPI service on async SQLAlchemy 2, PostgreSQL 16 (+ pgvector) and Redis in Docker Compose, one React app.
-Triage and routing currently run in-process inside the create request; step 8 of the build moves them to Kafka
-workers behind an outbox (see docs/GAP_REPORT.md). This document is rewritten in full as the platform grows.
+A FastAPI API and four Kafka workers on async SQLAlchemy 2, PostgreSQL 16 (+ pgvector), Redis and Apache Kafka (KRaft)
+in Docker Compose, one React app. The API writes tickets and their events in one transaction (outbox); a relay
+publishes them to Kafka and the AI, LLM, SLA and notification workers process them ([EVENTS.md](EVENTS.md)). This
+document is rewritten in full as the platform grows.
 
 ```mermaid
 flowchart LR
@@ -21,27 +22,34 @@ flowchart LR
     L -. "PII masked first" .-> OAI(("OpenAI API"))
     API --> DB[("PostgreSQL 16<br/>tickets, ticket_events, users, teams, …")]
     API --> R[("Redis<br/>analytics cache")]
+    DB -- "outbox" --> RELAY["Outbox relay"] --> K[["Kafka (KRaft)<br/>one topic per event type"]]
+    K --> W1["AI worker<br/>triage · routing · embeddings"]
+    K --> W2["LLM worker<br/>copilot draft"]
+    K --> W3["SLA worker"]
+    K --> W4["Notification worker"]
+    W1 & W2 & W3 & W4 --> DB
 ```
 
 ## Request flows
 
-**New ticket** — `POST /api/v1/tickets` (one transaction)
+**New ticket** — `POST /api/v1/tickets` returns at once; the AI work happens in the workers
 
 ```mermaid
 sequenceDiagram
     participant UI
     participant API as FastAPI
-    participant AI as Triage pipeline
-    participant RT as Routing rules
     participant DB as PostgreSQL
+    participant K as Kafka
+    participant AIW as AI worker
+    participant LLMW as LLM worker
     UI->>API: complaint text + optional customer/order/amount/product
-    API->>AI: entities → category & intent → sentiment → priority rules
-    AI-->>API: labels, confidences, top categories, entities, rule trace, model version
-    API->>DB: insert ticket (NEW), ai_analyses row, events created + triaged (→ TRIAGED)
-    API->>RT: category → owning team → candidates with open load (per-team advisory lock)
-    RT-->>API: ASSIGNED to least-busy agent · team queue · review queue (low confidence) · unrouted
-    API->>DB: assignee/team, routed + status_changed events, ticket embedding (MiniLM), commit
-    API-->>UI: ticket detail (timeline, allowed_actions)
+    API->>DB: ticket (NEW) + timeline "created" + outbox ticket.created — one transaction
+    API-->>UI: 201 ticket (NEW); the page polls while triage is pending
+    DB-->>K: relay publishes ticket.created (key = ticket id)
+    K->>AIW: ticket.created
+    AIW->>DB: triage (entities, category, intent, sentiment, priority rules), routing rules (team → least-busy agent),<br/>MiniLM embedding, outbox ai.analysis.completed + ticket.assigned, processed_events — one transaction
+    K->>LLMW: ai.analysis.completed
+    LLMW->>DB: copilot draft grounded in KB + similar tickets (pending until an agent accepts it)
 ```
 
 **Lifecycle actions** — `POST /tickets/{id}/assign|escalate|resolve|close|reopen`, `PATCH /tickets/{id}`: the ticket
@@ -74,6 +82,8 @@ aggregates, cached in Redis and invalidated on every write.
 | `backend/app/repositories/` | SQL only (no rules) |
 | `backend/app/models/`, `schemas/` | SQLAlchemy tables and Pydantic request/response shapes |
 | `backend/app/auth/` | JWT, password hashing, `CurrentUser` / `AdminUser` dependencies |
+| `backend/app/events/` | Event catalogue + envelope, outbox writes, inline bus, Kafka relay and consumer loop, consumer framework (idempotency, retries, DLQ) |
+| `backend/app/workers/` | The four workers (AI, LLM, SLA, notification) and `run.py` (`python -m app.workers.run ...`) |
 | `backend/app/ai/` | `triage.py` orchestrates `classifier.py`, `sentiment.py`, `entities.py`, `priority.py`; `llm.py` + `pii.py` for the copilot; `embeddings.py` (MiniLM, hashing fallback) |
 | `backend/migrations/` | Alembic migrations (the only way the schema changes) |
 | `backend/scripts/` | `prepare_db.py`, `seed.py` (org + users), `import_dataset.py` (history, linked to agents and teams) |

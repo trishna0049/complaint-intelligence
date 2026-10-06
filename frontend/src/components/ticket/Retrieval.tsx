@@ -20,8 +20,8 @@ function Loading() {
 }
 
 /** Past tickets like this one (hybrid search, limited to what the user may see). */
-export function SimilarTickets({ ticketId }: { ticketId: number }) {
-  const { data, isLoading, error, refetch } = useSimilarTickets(ticketId);
+export function SimilarTickets({ ticketId, version }: { ticketId: number; version?: string }) {
+  const { data, isLoading, error, refetch } = useSimilarTickets(ticketId, version);
   return (
     <Card>
       <CardHeader title="Similar tickets" icon={<Search className="h-4 w-4" />} subtitle="By meaning and keywords" />
@@ -53,8 +53,8 @@ export function SimilarTickets({ ticketId }: { ticketId: number }) {
 }
 
 /** Knowledge-base articles relevant to this ticket. */
-export function HelpArticles({ ticketId }: { ticketId: number }) {
-  const { data, isLoading, error, refetch } = useTicketArticles(ticketId);
+export function HelpArticles({ ticketId, version }: { ticketId: number; version?: string }) {
+  const { data, isLoading, error, refetch } = useTicketArticles(ticketId, version);
   return (
     <Card>
       <CardHeader title="Help articles" icon={<BookOpen className="h-4 w-4" />}

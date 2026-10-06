@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { BarChart3, BookOpen, Bot, Briefcase, ClipboardCheck, Inbox, LogOut, Menu, Plus, Shapes, Users, UsersRound, X } from "lucide-react";
+import { Activity, BarChart3, BookOpen, Bot, Briefcase, ClipboardCheck, Inbox, LogOut, Menu, Plus, Shapes, Users, UsersRound, X } from "lucide-react";
 import { useState, type ComponentType } from "react";
 import { NavLink, Outlet } from "react-router-dom";
 import { useHealth } from "@/api/client";
@@ -33,6 +33,7 @@ const SECTIONS: { title: string; items: NavItem[] }[] = [
       { to: "/admin/users", label: "Users", icon: Users, roles: ["ADMIN"] },
       { to: "/admin/teams", label: "Teams", icon: UsersRound, roles: ["ADMIN"] },
       { to: "/admin/categories", label: "Categories", icon: Shapes, roles: ["ADMIN"] },
+      { to: "/admin/events", label: "Event pipeline", icon: Activity, roles: ["ADMIN"] },
     ],
   },
 ];

@@ -5,6 +5,7 @@ import { homeFor } from "@/auth/home";
 import { Layout } from "@/components/Layout";
 import { Card, EmptyState } from "@/components/ui";
 import { CategoriesPage } from "@/pages/admin/CategoriesPage";
+import { EventsPage } from "@/pages/admin/EventsPage";
 import { TeamsPage } from "@/pages/admin/TeamsPage";
 import { UsersPage } from "@/pages/admin/UsersPage";
 import { DashboardPage } from "@/pages/DashboardPage";
@@ -51,6 +52,7 @@ export default function App() {
             <Route path="users" element={<UsersPage />} />
             <Route path="teams" element={<TeamsPage />} />
             <Route path="categories" element={<CategoriesPage />} />
+            <Route path="events" element={<EventsPage />} />
           </Route>
           <Route path="*" element={<Card><EmptyState title="Page not found" /></Card>} />
         </Route>

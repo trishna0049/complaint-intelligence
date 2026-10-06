@@ -17,6 +17,7 @@ Satisfaction* dataset (85,907 support records from an Indian e-commerce company)
 | Routing (team + agent) | Deterministic rules: category → owning team → least-busy agent; low confidence → review queue ([docs/ROUTING_RULES.md](docs/ROUTING_RULES.md)) |
 | Similar tickets & knowledge base | MiniLM (`all-MiniLM-L6-v2`, 384 dims) on pgvector HNSW **+** PostgreSQL full text, fused by weighted Reciprocal Rank Fusion; 26 seeded help articles; evaluated on fixed examples ([ml/reports/retrieval_report.md](ml/reports/retrieval_report.md)) |
 | Copilot: summary, likely root cause, key issues, next steps, draft reply | OpenAI API with structured outputs (prompt `copilot-v3`), **grounded (RAG)** in the most relevant help articles and similar past tickets plus the ticket's conversation, citing what it used; offline **mock** provider when no key is set; PII masked first (the customer's name is restored locally in the reply); the draft is only posted when an agent accepts it |
+| Events | Transactional outbox → Kafka (KRaft) → AI, LLM, SLA and notification workers; idempotent consumers, 3 retries, dead-letter queue with Admin replay ([docs/EVENTS.md](docs/EVENTS.md)) |
 | Dashboard | KPIs, daily volume & sentiment trends, category / intent / channel breakdowns, week-over-week emerging issues, open high-priority list, auto-generated insights |
 
 ---
@@ -27,13 +28,13 @@ Prerequisites: Python 3.12, Node 20+, Docker Desktop, and the dataset CSV saved 
 
 ```powershell
 .\scripts\dev.ps1 setup     # .env, Python venv, pip + npm install
-.\scripts\dev.ps1 up        # PostgreSQL 16 + pgvector (localhost:15432) and Redis (localhost:16379) in Docker
+.\scripts\dev.ps1 up        # PostgreSQL 16 + pgvector (:15432), Redis (:16379), Kafka KRaft (:19092), Kafka UI (:18090)
 .\scripts\dev.ps1 migrate   # create the database and apply the Alembic migrations
 .\scripts\dev.ps1 seed      # departments, teams, categories, admin, 1,371 dataset agents, knowledge base (~1 min)
 .\scripts\dev.ps1 train     # data profile, train classifiers, validate the sentiment model (~45 min on CPU)
 .\scripts\dev.ps1 import    # load the 85,907 historical complaints into Postgres (~75 s, idempotent)
 .\scripts\dev.ps1 embed     # MiniLM embeddings of the 13,779 informative tickets (~2 min, idempotent)
-.\scripts\dev.ps1 start     # API on http://localhost:18000, app on http://localhost:15173
+.\scripts\dev.ps1 start     # Kafka topics, then API (:18000), workers and app (http://localhost:15173)
 ```
 
 Other commands: `.\scripts\dev.ps1 test` (needs `up`), `lint`, `api`, `web`, `down`, `reset-db`.
@@ -92,7 +93,10 @@ and are renewed automatically from an HttpOnly refresh cookie; reusing an old re
    see) and the most relevant help articles; the **Knowledge base** page searches by meaning and keywords. Admins
    create and edit articles (re-indexed on save); agents read them. The copilot is grounded in the same results and
    shows which ones it relied on ("Grounded in").
-8. **My work** — the agent's start page: open tickets by state, highest priority first, and the team's unassigned
+8. **Event pipeline** — creating a ticket is instant (NEW); the AI worker triages and routes it, the LLM worker
+   drafts the copilot answer, and the page refreshes itself while they work. **Admin → Event pipeline** shows the
+   outbox lag, what each worker processed and the dead-letter queue (replay / discard). See [docs/EVENTS.md](docs/EVENTS.md).
+9. **My work** — the agent's start page: open tickets by state, highest priority first, and the team's unassigned
    backlog.
 
 Permissions follow the spec: agents work on own/team tickets and may reassign within their team; reassigning to
@@ -143,6 +147,7 @@ needs `Authorization: Bearer <access token>`; Admin-only routes return 403 for a
 | GET | `/tickets/{id}/similar` | Similar tickets (hybrid search, scoped to the caller) |
 | GET | `/knowledge/search?q=` or `?ticket_id=` | Knowledge-base search (hybrid) |
 | CRUD | `/knowledge` | Help articles: read for everyone, create / edit / delete for Admins (audited) |
+| GET · POST | `/admin/events` · `/admin/dlq`, `/admin/dlq/{id}/replay`, `/admin/dlq/{id}/discard` | Event pipeline status · dead-letter queue (Admin) |
 | GET | `/teams/{id}/members` | Active members with their open-ticket load (agents: own team) |
 | POST | `/ai/draft-response` | Copilot for `{ticket_id}`: summary, root cause, key issues, next steps, draft reply (re-running supersedes the pending draft) |
 | POST | `/ai/drafts/{id}/accept` · `/ai/drafts/{id}/discard` | Agent review of a draft: accept `{response}` (as is or edited → AI-assisted comment) or discard `{reason?}` |
@@ -158,6 +163,7 @@ Interactive docs: http://localhost:18000/docs
 
 ```
 backend/app/        FastAPI app — api/v1/ (routes), domain/ (ticket state machine), services/ (business rules),
+                    events/ (outbox, Kafka relay, consumer framework), workers/ (AI, LLM, SLA, notification),
                     repositories/ (SQL), models/, schemas/, auth/, core/, ai/ (triage, classifier, sentiment,
                     entities, priority, pii, llm, embeddings)
 backend/scripts/    prepare_db.py (create + migrate), seed.py (org + users + KB), seed_knowledge.py, import_dataset.py,
@@ -169,7 +175,7 @@ frontend/src/       pages/ (Dashboard, MyWork, Tickets, ReviewQueue, NewTicket, 
                     ActionBar, Conversation, Timeline, CopilotPanel, Retrieval), api/, auth/
 tests/backend/      pytest (AI components, API, auth/permissions, lifecycle, routing, copilot, retrieval, dashboard)
 tests/e2e/          Playwright end-to-end test of the full complaint flow
-docs/               DATA_PROFILE.md, ARCHITECTURE.md, PRIORITY_RULES.md, ROUTING_RULES.md
+docs/               DATA_PROFILE.md, ARCHITECTURE.md, PRIORITY_RULES.md, ROUTING_RULES.md, EVENTS.md
 scripts/dev.ps1     all developer commands
 ```
 

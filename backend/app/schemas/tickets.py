@@ -225,3 +225,5 @@ class TicketDetail(TicketListItem):
     # False only in the response to a change that moved the ticket out of the caller's scope (e.g. a category fix
     # routed it to another team); the next GET returns 404.
     can_view: bool = True
+    # Background work for this ticket (Kafka workers): triage pending|done|failed, copilot ready|drafting|failed|manual
+    pipeline: dict[str, str] = {}

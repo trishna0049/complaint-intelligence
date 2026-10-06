@@ -11,7 +11,16 @@ from typing import Any
 from sqlalchemy import ColumnElement, Select, and_, case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import AIAnalysis, Customer, Ticket, TicketAttachment, TicketComment, TicketEvent, User
+from app.models import (
+    AIAnalysis,
+    Customer,
+    DeadLetter,
+    Ticket,
+    TicketAttachment,
+    TicketComment,
+    TicketEvent,
+    User,
+)
 
 PRIORITY_ORDER = ["Low", "Medium", "High", "Critical"]
 
@@ -197,3 +206,10 @@ async def open_load(db: AsyncSession, user_ids: list[int], open_statuses: list[s
         .group_by(Ticket.assignee_id)
     )
     return {uid: n for uid, n in rows.all()}
+
+
+async def waiting_dead_letter_consumers(db: AsyncSession, ticket_id: int) -> set[str]:
+    rows = await db.scalars(
+        select(DeadLetter.consumer).where(DeadLetter.ticket_id == ticket_id, DeadLetter.status == "waiting")
+    )
+    return set(rows.all())

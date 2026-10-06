@@ -233,6 +233,41 @@ export interface TicketDetail extends Ticket {
   allowed_actions: TicketAction[];
   /** False only in the response to a change that moved the ticket out of the caller's scope. */
   can_view: boolean;
+  /** Background work (Kafka workers): triage by the AI worker, the copilot draft by the LLM worker. */
+  pipeline: { triage: "pending" | "done" | "failed"; copilot: "ready" | "drafting" | "failed" | "manual" };
+}
+
+export interface DeadLetter {
+  id: number;
+  consumer: string;
+  event_id: string;
+  event_type: string;
+  ticket_id: number | null;
+  envelope: Record<string, unknown>;
+  error: string;
+  attempts: number;
+  status: "waiting" | "replayed" | "discarded";
+  failed_at: string;
+  resolved_at: string | null;
+  resolved_by_id: number | null;
+}
+
+export interface PipelineStatus {
+  mode: "kafka" | "inline";
+  prefix: string;
+  kafka_bootstrap_servers: string | null;
+  retries: number;
+  kafka_ui_url: string | null;
+  outbox: { pending: number; oldest_pending_seconds: number | null; failing: number; last_published_at: string | null };
+  consumers: {
+    name: string;
+    description: string;
+    events: string[];
+    processed_total: number;
+    processed_last_hour: number;
+    last_processed_at: string | null;
+    dead_letters_waiting: number;
+  }[];
 }
 
 export interface TicketSummary {

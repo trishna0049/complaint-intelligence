@@ -14,8 +14,8 @@ and committed locally before the next one starts.
 | 5 | Routing — category → team → least-busy agent; low-confidence review queue | ✅ |
 | 6 | Copilot completion — root cause, prompt_version, accept / regenerate / discard | ✅ |
 | 7 | Retrieval — MiniLM embeddings, HNSW, hybrid search, similar tickets, knowledge base, RAG | ✅ |
-| 8 | Events — Kafka (KRaft) + UI, outbox relay, 4 workers, idempotency, retries, DLQ + replay | ⏳ next |
-| 9 | SLA engine — policies, pause rule, warning/breach once, auto-escalation, live badge, demo speed-up | ⏳ |
+| 8 | Events — Kafka (KRaft) + UI, outbox relay, 4 workers, idempotency, retries, DLQ + replay | ✅ |
+| 9 | SLA engine — policies, pause rule, warning/breach once, auto-escalation, live badge, demo speed-up | ⏳ next |
 | 10 | Notifications — table, SSE via Redis pub/sub, bell, page, toasts, optional SMTP | ⏳ |
 | 11 | Analytics completion — SLA/timing/repeat/city/product/workload, day/week/month, My stats | ⏳ |
 | 12 | AI triage gaps — spaCy entities, DistilBERT comparison | ⏳ |
@@ -52,9 +52,15 @@ and committed locally before the next one starts.
 - Retrieval: MiniLM embeddings (`ticket_embeddings`, HNSW) for 13,779 informative tickets (`.\scripts\dev.ps1 embed`,
   new tickets embedded on create), 26 seeded help articles (`seed` runs `scripts.seed_knowledge`), hybrid search
   (vectors + full text, weighted RRF) for `/tickets/{id}/similar` and `/knowledge/search`; Knowledge base screens.
-- Triage, routing and embedding still run inside the create request — step 8 moves them to Kafka workers.
-- Next: step 8 (events: Kafka KRaft + UI, outbox relay, AI / LLM / SLA / notification workers, idempotency via
-  processed_events, 3 retries then DLQ, Admin replay).
+- Events ([docs/EVENTS.md](docs/EVENTS.md)): `.\scripts\dev.ps1 up` also starts Kafka (KRaft, localhost:19092) and
+  Kafka UI (http://localhost:18090); `.\scripts\dev.ps1 workers` runs the outbox relay + AI / LLM / SLA / notification
+  workers (`start` opens API, workers and web). Ticket creation returns NEW at once; the AI worker triages, routes and
+  embeds; the LLM worker drafts the copilot answer (`COPILOT_AUTO`). Unit tests run `EVENTS_MODE=inline`.
+- The SLA worker and the notification worker are subscribed (their topics, groups, idempotency and DLQ work) but
+  their handlers are pass-throughs until steps 9 (SLA engine) and 10 (notifications) — by plan.
+- Next: step 9 (SLA engine: sla_policies CRUD, deadlines from priority/category, pause while WAITING_CUSTOMER,
+  sla_events started/warning/breached/paused once each, auto-escalation on breach, live countdown badge, demo
+  speed-up).
 
 ## Step log
 
@@ -230,3 +236,41 @@ and committed locally before the next one starts.
   ~$0.0003).
 - Tests: 220 backend (+ MiniLM fixed-example tests, skipped where the model isn't cached), 48 frontend, Playwright
   e2e checks the help article, copilot grounding and a KB search.
+
+### Step 8 — Events: Kafka, outbox, four workers, idempotency, retries, DLQ ✅
+- Compose: `apache/kafka:3.9.1` in KRaft mode (combined broker + controller, host listener `localhost:19092`, internal
+  `kafka:9092`) and `kafbat/kafka-ui` on http://localhost:18090. CI gets a Kafka service container too.
+- Migration `0008`: `outbox` (envelope JSONB, published_at, attempts, last_error; partial index on unpublished),
+  `processed_events` (PK consumer + event_id), `dead_letters` (waiting / replayed / discarded, who and when).
+- `app/events/`: event catalogue = the spec's table (8 types, one topic each `<prefix>.<type>`, 3 partitions, key =
+  ticket id) + `<prefix>.dlq`; envelope `event_id, type, timestamp, ticket_id, actor, payload, replay_of`. Domain events
+  are derived from the ticket timeline in one place (`services/timeline.py`), written to the outbox in the change's
+  transaction. Relay: `FOR UPDATE SKIP LOCKED`, idempotent producer with `acks=all`, rows marked published only after
+  the ack, attempts + last error kept while Kafka is down. Consumer framework: idempotency record committed with the
+  handler's writes, 1 try + 3 retries with exponential backoff, then `dead_letters` + DLQ topic; offsets committed after
+  processed / duplicate / dead-lettered. Inline mode runs the same consumers after the commit (unit tests, demos).
+- Workers (`python -m app.workers.run ai|llm|sla|notification|relay|all|topics [--reset]`, `--health-port`):
+  AI (ticket.created → triage + routing + embedding; ticket.updated/resolved → embeddings + analytics), LLM
+  (ai.analysis.completed → copilot draft for the agent, system-scoped grounding), SLA and notification (subscribed;
+  logic in steps 9–10). Ticket creation is now instant (NEW) — order id / ₹ amount are filled from the extracted
+  entities by the AI worker.
+- Admin: `GET /admin/events` (outbox lag, per-worker processed counts, DLQ per worker), `GET /admin/dlq`,
+  `POST /admin/dlq/{id}/replay` (same event id: only the failed consumer re-runs) and `/discard`, audited; **Event
+  pipeline** page with a Kafka UI link. Ticket detail carries `pipeline` (triage pending/done/failed, copilot
+  ready/drafting/failed/manual); the workspace shows "Triaging…" / "drafting…", refreshes every 1.5 s while the workers
+  work and explains DLQ failures.
+- Bugs found and fixed: the relay's error path read rows after the rollback had expired them (crash exactly when
+  Kafka was down — caught by the integration test); help articles fetched while a ticket was still NEW (no category
+  boost) were never refreshed after triage (caught by e2e: queries are now keyed by triage state + category); for a
+  whole complaint as the query, keyword-only articles were noise ("Cancelling an order" for a broken mixer) — keywords
+  now only re-rank meaning matches there; aiokafka 0.12 has no consumer-group deletion — not needed, Kafka drops a
+  group's offsets with the deleted topics (verified by running the e2e twice on recreated topics).
+- Checked by hand on the dev database with real Kafka and OpenAI: POST returned NEW at once, the AI worker triaged
+  (Refund Related, order id and ₹3,499 extracted) and routed it within ~1 s of the relay publishing, the LLM worker's
+  OpenAI draft was ready ~6 s later; screenshots of the "Triaging…" state, the finished workspace and the Event
+  pipeline page.
+- Tests: 239 backend (14 inline event tests: catalogue, outbox per change, same-transaction rollback, async contract,
+  idempotency, atomic handler + idempotency record, retries, DLQ, replay only re-runs the failed consumer, discard,
+  status, LLM auto-draft and its outage → DLQ → replay; 4 Kafka integration tests on the real broker: full flow,
+  duplicate delivery processed once, retries → DLQ topic → replay through Kafka, relay keeps events during an outage),
+  53 frontend (5 new), Playwright e2e on Kafka + all workers (run twice).

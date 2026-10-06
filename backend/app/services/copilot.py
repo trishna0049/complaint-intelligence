@@ -49,7 +49,7 @@ ARTICLE_CHARS = 1_200  # of each help article given to the model
 TICKET_CHARS = 600  # of each similar ticket
 
 
-async def grounding(db: AsyncSession, user: User, t: Ticket) -> tuple[list[dict[str, Any]], list[str]]:
+async def grounding(db: AsyncSession, user: User | None, t: Ticket) -> tuple[list[dict[str, Any]], list[str]]:
     """References for the prompt ([A1].. articles, [T1].. similar tickets) and the customer names to mask in them."""
     s = get_settings()
     refs: list[dict[str, Any]] = []
@@ -94,8 +94,19 @@ def _normalise(text: str | None) -> str:
 
 
 async def generate(db: AsyncSession, user: User, ticket_id: int) -> AIAnalysis:
-    """Run the copilot. A previous pending draft on the ticket becomes `superseded` (regenerate)."""
+    """Run the copilot for a person (Run copilot / Regenerate). A previous pending draft becomes `superseded`."""
     t = await tickets_svc.get_ticket(db, user, ticket_id)
+    analysis = await draft(db, t, user)
+    await tickets_svc.commit(db)
+    await db.refresh(analysis, ["reviewed_by"])
+    return analysis
+
+
+async def draft(db: AsyncSession, t: Ticket, user: User | None) -> AIAnalysis:
+    """Build the context (conversation + RAG references), call the LLM and stage the analysis and its timeline
+    event. Does not commit the result: the API commits it, the LLM worker lets the consumer framework commit it
+    together with its idempotency record. `user` None = the LLM worker (system)."""
+    ticket_id = t.id
     comments = await repo.comments(db, t.id)
     conversation = [
         {
@@ -150,7 +161,7 @@ async def generate(db: AsyncSession, user: User, ticket_id: int) -> AIAnalysis:
         db, [r["id"] for r in references if r["type"] == "article" and r["ref"] in cited]
     )
     await repo.add_analysis(db, analysis)
-    t = await tickets_svc.get_ticket(db, user, ticket_id)
+    t = await ticket_repo_get(db, ticket_id)
     tickets_svc.record_event(
         db,
         t,
@@ -164,10 +175,25 @@ async def generate(db: AsyncSession, user: User, ticket_id: int) -> AIAnalysis:
         context_comments=len(conversation),
         references=len(references),
         cited=sorted(cited & {r["ref"] for r in references}),
+        auto=user is None,
     )
-    await db.commit()
-    await db.refresh(analysis, ["reviewed_by"])
     return analysis
+
+
+async def ticket_repo_get(db: AsyncSession, ticket_id: int) -> Ticket:
+    t = await repo.get(db, ticket_id)
+    if t is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Ticket not found")
+    return t
+
+
+async def auto_draft(db: AsyncSession, ticket_id: int) -> AIAnalysis | None:
+    """LLM worker, on ai.analysis.completed: draft the copilot answer before the agent opens the ticket — unless one
+    exists already (an agent was quicker, or this is a redelivery)."""
+    t = await repo.get(db, ticket_id)
+    if t is None or any(a.kind == "copilot" for a in t.analyses):
+        return None
+    return await draft(db, t, None)
 
 
 async def _pending_draft(db: AsyncSession, user: User, analysis_id: int) -> tuple[AIAnalysis, Ticket]:

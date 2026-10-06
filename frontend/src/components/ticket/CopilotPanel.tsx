@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { AlertTriangle, BookOpen, Bot, Check, ClipboardCopy, Lightbulb, ListChecks, RefreshCw, Send, Sparkles, Trash2 } from "lucide-react";
+import { AlertTriangle, BookOpen, Bot, Loader2, Check, ClipboardCopy, Lightbulb, ListChecks, RefreshCw, Send, Sparkles, Trash2 } from "lucide-react";
 import { useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { ApiError } from "@/api/http";
@@ -50,8 +50,23 @@ export function CopilotPanel({ ticket }: { ticket: TicketDetail }) {
         )}
         {generate.isPending && !insight ? (
           <div className="space-y-2"><Skeleton className="h-4 w-3/4" /><Skeleton className="h-4 w-1/2" /><Skeleton className="h-16" /></div>
+        ) : !insight && ticket.pipeline.copilot === "drafting" ? (
+          <div className="space-y-2" role="status">
+            <p className="flex items-center gap-2 text-sm text-slate-600">
+              <Loader2 className="h-4 w-4 animate-spin text-violet-500" /> The LLM worker is drafting a summary and a reply…
+            </p>
+            <Skeleton className="h-4 w-3/4" /><Skeleton className="h-16" />
+          </div>
         ) : !insight ? (
-          <EmptyState title="No copilot output yet" description="Personal data is masked before the complaint is sent to the model." icon={<Bot className="h-6 w-6" />} />
+          <>
+            {ticket.pipeline.copilot === "failed" && (
+              <p className="mb-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900" role="alert">
+                The automatic draft failed (the LLM was unavailable) and waits in the dead-letter queue. Run the copilot by
+                hand, or an Admin can replay it.
+              </p>
+            )}
+            <EmptyState title="No copilot output yet" description="Personal data is masked before the complaint is sent to the model." icon={<Bot className="h-6 w-6" />} />
+          </>
         ) : (
           <div className="space-y-4 text-sm">
             <section>
