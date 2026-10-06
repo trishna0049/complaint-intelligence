@@ -6,6 +6,7 @@ import { Layout } from "@/components/Layout";
 import { Card, EmptyState } from "@/components/ui";
 import { CategoriesPage } from "@/pages/admin/CategoriesPage";
 import { EventsPage } from "@/pages/admin/EventsPage";
+import { SlaPoliciesPage } from "@/pages/admin/SlaPoliciesPage";
 import { TeamsPage } from "@/pages/admin/TeamsPage";
 import { UsersPage } from "@/pages/admin/UsersPage";
 import { DashboardPage } from "@/pages/DashboardPage";
@@ -53,6 +54,7 @@ export default function App() {
             <Route path="teams" element={<TeamsPage />} />
             <Route path="categories" element={<CategoriesPage />} />
             <Route path="events" element={<EventsPage />} />
+            <Route path="sla" element={<SlaPoliciesPage />} />
           </Route>
           <Route path="*" element={<Card><EmptyState title="Page not found" /></Card>} />
         </Route>

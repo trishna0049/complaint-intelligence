@@ -18,9 +18,9 @@ API change ─(same transaction)─► outbox row ─► relay ─► Kafka topi
 | `ai.analysis.completed` | triage finished | **LLM worker** (drafts the copilot answer), **SLA worker** (starts the clock) |
 | `ticket.assigned` | routed or reassigned | **Notification worker** |
 | `ticket.updated` / `ticket.resolved` | status or category changes / resolved | **AI worker** (embeddings + analytics), **SLA worker** (pause / stop) |
-| `ticket.escalated` | manual or automatic escalation | **Notification worker** (alerts admins), **SLA worker** |
+| `ticket.escalated` | manual or automatic escalation | **Notification worker** (alerts admins) |
 | `sla.warning` | 80 % of the SLA used | **Notification worker** (alerts the agent) |
-| `sla.breached` | 100 % of the SLA used | auto-escalation, **Notification worker** (alerts admins) |
+| `sla.breached` | 100 % of the SLA used | **SLA worker** (auto-escalation), **Notification worker** (alerts admins) |
 
 Every message is an envelope: `event_id` (UUID), `type`, `timestamp`, `ticket_id`, `actor` (`{id, name, role}`, id null
 = the system), `payload` (a snapshot of the ticket — number, status, priority, category, assignee, team — plus the
@@ -29,7 +29,7 @@ id** so a ticket's events are processed in order. Domain events are derived from
 ([backend/app/services/timeline.py](../backend/app/services/timeline.py)), so every change on the timeline that matters
 to another part of the system is published, and nothing else.
 
-The SLA worker's clock and the notification worker's alerts are build steps 9 and 10; their subscriptions are live now.
+The SLA worker also runs the scanner that emits `sla.warning` / `sla.breached` and escalates on a breach ([SLA.md](SLA.md)); the notification worker's alerts are build step 10.
 
 ## Guarantees
 

@@ -133,8 +133,9 @@ async def test_new_ticket_goes_to_the_least_busy_agent_of_the_category_team(clie
     meta = routed(t)
     assert meta["rule"] == "LEAST_BUSY" and meta["outcome"] == "assigned" and meta["trigger"] == "triage"
     assert meta["candidates"] == 3 and meta["open_tickets"] == 1
-    assert [e["event_type"] for e in t["timeline"]][-2:] == ["routed", "status_changed"]
-    assert t["timeline"][-2]["actor"] is None  # the rules, not a person
+    work = [e for e in t["timeline"] if not e["event_type"].startswith("sla_")]
+    assert [e["event_type"] for e in work][-2:] == ["routed", "status_changed"]
+    assert work[-2]["actor"] is None  # the rules, not a person
     async with SessionLocal() as db:
         assert (await db.get(User, quiet.id)).last_assigned_at is not None
 
@@ -234,7 +235,8 @@ async def test_a_ticket_in_progress_keeps_its_owner_when_the_category_changes(cl
     await agent_client.patch(f"/api/v1/tickets/{t['id']}", json={"status": "IN_PROGRESS"})
     body = (await agent_client.patch(f"/api/v1/tickets/{t['id']}", json={"category": "Returns"})).json()
     assert body["assignee"]["name"] == "Arjun Agent" and body["team"]["name"] == "Payments Support"
-    assert body["timeline"][-1]["event_type"] == "category_corrected"
+    work = [e["event_type"] for e in body["timeline"] if not e["event_type"].startswith("sla_")]
+    assert work[-1] == "category_corrected"  # no re-routing (the SLA re-targets to the new priority, see test_sla)
 
 
 # ------------------------------------------------------------------------------------------------ auto-assign

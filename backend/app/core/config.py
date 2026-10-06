@@ -85,6 +85,11 @@ class Settings(BaseSettings):
     rag_similar_tickets: int = 3  # past tickets given to the copilot as grounding
     rag_articles: int = 2  # knowledge-base articles given to the copilot as grounding
 
+    # --- SLA engine (app/domain/sla.py, app/services/sla.py) ---
+    # Demo speed-up: SLA targets run this many times faster (60 -> a 2-hour SLA lapses in 2 minutes). 1 = real time.
+    sla_speedup: float = 1.0
+    sla_scan_seconds: float = 5.0  # how often the SLA worker looks for warnings (80 %) and breaches (100 %)
+
     # --- routing (deterministic rules, app/domain/routing.py) ---
     # An agent with this many open tickets gets no more automatic assignments; the ticket waits in the team queue.
     routing_max_open_per_agent: int = 25

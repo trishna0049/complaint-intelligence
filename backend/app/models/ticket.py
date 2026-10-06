@@ -23,6 +23,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db import Base
 from app.models.org import Team, User
+from app.models.sla import SlaPolicy
 
 # Ticket numbers (INC-00001 ... INC-123456) come from a sequence so concurrent inserts never collide. The SQL
 # function next_ticket_number() (migration 0002) pads to at least five digits.
@@ -82,6 +83,18 @@ class Ticket(Base):
     )
     first_response_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     escalated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # --- SLA clock (app/domain/sla.py; driven by the SLA worker) ---
+    sla_policy_id: Mapped[int | None] = mapped_column(ForeignKey("sla_policies.id", ondelete="SET NULL"))
+    sla_target_seconds: Mapped[int | None] = mapped_column(Integer)
+    sla_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    sla_deadline: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # moves out while paused
+    sla_paused_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # a pause in progress
+    sla_paused_seconds: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    sla_stopped_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    sla_warned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    sla_breached_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # none | running | paused | met | breached  (at_risk is computed for display from the clock)
+    sla_status: Mapped[str] = mapped_column(String(12), default="none", server_default="none")
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
@@ -106,6 +119,7 @@ class Ticket(Base):
     assignee: Mapped[User | None] = relationship(foreign_keys=[assignee_id], lazy="joined")
     team: Mapped[Team | None] = relationship(lazy="joined")
     customer: Mapped[Customer | None] = relationship(lazy="joined")
+    sla_policy: Mapped[SlaPolicy | None] = relationship(lazy="joined")
     created_by: Mapped[User | None] = relationship(foreign_keys=[created_by_id], lazy="noload")
 
     @property
@@ -120,6 +134,8 @@ class Ticket(Base):
         Index("ix_tickets_team_status", "team_id", "status"),
         Index("ix_tickets_created_by_id", "created_by_id"),
         Index("ix_tickets_description_tsv", "description_tsv", postgresql_using="gin"),
+        Index("ix_tickets_sla_due", "sla_deadline", postgresql_where=text("sla_status = 'running'")),
+        Index("ix_tickets_sla_status", "sla_status"),
         Index(
             "ix_tickets_review_queue",
             "created_at",

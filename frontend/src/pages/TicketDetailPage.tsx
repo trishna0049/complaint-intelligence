@@ -8,6 +8,7 @@ import { ActionBar } from "@/components/ticket/ActionBar";
 import { CopilotPanel } from "@/components/ticket/CopilotPanel";
 import { Conversation } from "@/components/ticket/Conversation";
 import { HelpArticles, SimilarTickets } from "@/components/ticket/Retrieval";
+import { SlaBadge, SlaCard } from "@/components/Sla";
 import { Timeline } from "@/components/ticket/Timeline";
 import { TriageView } from "@/components/TriageView";
 import { Avatar, Badge, Button, Card, CardHeader, EmptyState, ErrorState, LoadingState, Select, Skeleton } from "@/components/ui";
@@ -46,6 +47,7 @@ export function TicketDetailPage() {
             <span className="font-mono text-sm text-slate-500">{t.ticket_number}</span>
             <StatusBadge status={t.status} />
             <TicketPriority priority={t.priority} status={t.status} />
+            <SlaBadge sla={t.sla} />
             {t.needs_review && <Badge tone="violet"><Sparkles className="h-3 w-3" /> Needs review</Badge>}
             {t.reopen_count > 0 && <Badge tone="amber">Reopened ×{t.reopen_count}</Badge>}
           </div>
@@ -134,6 +136,7 @@ export function TicketDetailPage() {
             </dl>
           </Card>
 
+          <SlaCard sla={t.sla} />
           <CustomerCard ticket={t} />
           <HelpArticles ticketId={t.id} version={`${t.pipeline.triage}:${t.category ?? ""}`} />
           <SimilarTickets ticketId={t.id} version={`${t.pipeline.triage}:${t.category ?? ""}`} />

@@ -148,3 +148,25 @@ def build_insights(kpis: dict[str, Any], emerging: list[dict[str, Any]]) -> list
         direction = "up" if kpis["total_change_pct"] >= 0 else "down"
         notes.append(f"Overall volume is {direction} {abs(kpis['total_change_pct']):.0f}% versus the previous period.")
     return notes or ["Not enough recent data for insights yet."]
+
+
+# ------------------------------------------------------------------------------------------- SLA
+async def sla(db: AsyncSession, days: int = 30, granularity: str = "day") -> dict[str, Any]:
+    return await cached_json(CACHE_NS, f"sla:{days}:{granularity}", CACHE_SECONDS, lambda: _sla(db, days, granularity))
+
+
+async def _sla(db: AsyncSession, days: int, granularity: str, now: datetime | None = None) -> dict[str, Any]:
+    from app.models import Team
+
+    now, since, _ = window(days, now)
+    until = now + timedelta(seconds=1)
+    summary = await q.sla_summary(db, since, until, now)
+    return {
+        "window_days": days,
+        "generated_at": now.isoformat(),
+        **summary,
+        "by_priority": await q.sla_by(db, since, until, Ticket.priority),
+        "by_category": await q.sla_by(db, since, until, Ticket.category),
+        "by_team": await q.sla_by_team(db, since, until, Team),
+        "trend": await q.sla_trend(db, since, until, granularity),
+    }

@@ -43,3 +43,14 @@ async def categories(_: AdminUser, days: int = Days, db: AsyncSession = Depends(
 async def emerging(_: AdminUser, db: AsyncSession = Depends(get_session)) -> dict[str, Any]:
     """Week-over-week growth per category."""
     return await svc.emerging(db)
+
+
+@router.get("/sla")
+async def sla(
+    _: AdminUser,
+    days: int = Days,
+    granularity: str = Query(default="day", pattern="^(day|week|month)$"),
+    db: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """SLA breach rate (overall, by priority, category and team, over time), resolution vs target, open at risk."""
+    return await svc.sla(db, days, granularity)

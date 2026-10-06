@@ -17,6 +17,7 @@ Satisfaction* dataset (85,907 support records from an Indian e-commerce company)
 | Routing (team + agent) | Deterministic rules: category → owning team → least-busy agent; low confidence → review queue ([docs/ROUTING_RULES.md](docs/ROUTING_RULES.md)) |
 | Similar tickets & knowledge base | MiniLM (`all-MiniLM-L6-v2`, 384 dims) on pgvector HNSW **+** PostgreSQL full text, fused by weighted Reciprocal Rank Fusion; 26 seeded help articles; evaluated on fixed examples ([ml/reports/retrieval_report.md](ml/reports/retrieval_report.md)) |
 | Copilot: summary, likely root cause, key issues, next steps, draft reply | OpenAI API with structured outputs (prompt `copilot-v3`), **grounded (RAG)** in the most relevant help articles and similar past tickets plus the ticket's conversation, citing what it used; offline **mock** provider when no key is set; PII masked first (the customer's name is restored locally in the reply); the draft is only posted when an agent accepts it |
+| SLA engine | Policies per priority (+ category), clock from creation, pause while waiting on the customer, warning at 80 % and breach at 100 % once each, automatic escalation, live countdown ([docs/SLA.md](docs/SLA.md)) |
 | Events | Transactional outbox → Kafka (KRaft) → AI, LLM, SLA and notification workers; idempotent consumers, 3 retries, dead-letter queue with Admin replay ([docs/EVENTS.md](docs/EVENTS.md)) |
 | Dashboard | KPIs, daily volume & sentiment trends, category / intent / channel breakdowns, week-over-week emerging issues, open high-priority list, auto-generated insights |
 
@@ -96,7 +97,11 @@ and are renewed automatically from an HttpOnly refresh cookie; reusing an old re
 8. **Event pipeline** — creating a ticket is instant (NEW); the AI worker triages and routes it, the LLM worker
    drafts the copilot answer, and the page refreshes itself while they work. **Admin → Event pipeline** shows the
    outbox lag, what each worker processed and the dead-letter queue (replay / discard). See [docs/EVENTS.md](docs/EVENTS.md).
-9. **My work** — the agent's start page: open tickets by state, highest priority first, and the team's unassigned
+9. **SLA** — every triaged ticket gets a deadline from its SLA policy (Critical 2 h … Low 3 days; Admins edit them
+   under **SLA policies**). The badge counts down live (green → amber at 80 % → red when breached, grey while waiting on
+   the customer); a breach escalates the ticket automatically. Queue views *SLA at risk* / *SLA breached*; the
+   dashboard shows the breach rate. Set `SLA_SPEEDUP=120` to watch a 2-hour SLA lapse in a minute. See [docs/SLA.md](docs/SLA.md).
+10. **My work** — the agent's start page: open tickets by state, highest priority first, and the team's unassigned
    backlog.
 
 Permissions follow the spec: agents work on own/team tickets and may reassign within their team; reassigning to
@@ -147,6 +152,8 @@ needs `Authorization: Bearer <access token>`; Admin-only routes return 403 for a
 | GET | `/tickets/{id}/similar` | Similar tickets (hybrid search, scoped to the caller) |
 | GET | `/knowledge/search?q=` or `?ticket_id=` | Knowledge-base search (hybrid) |
 | CRUD | `/knowledge` | Help articles: read for everyone, create / edit / delete for Admins (audited) |
+| CRUD | `/sla-policies` | SLA targets per priority / category (Admin, audited) |
+| GET | `/analytics/sla` | Breach rate by priority, category, team and over time; open at risk / breached (Admin) |
 | GET · POST | `/admin/events` · `/admin/dlq`, `/admin/dlq/{id}/replay`, `/admin/dlq/{id}/discard` | Event pipeline status · dead-letter queue (Admin) |
 | GET | `/teams/{id}/members` | Active members with their open-ticket load (agents: own team) |
 | POST | `/ai/draft-response` | Copilot for `{ticket_id}`: summary, root cause, key issues, next steps, draft reply (re-running supersedes the pending draft) |
@@ -175,7 +182,7 @@ frontend/src/       pages/ (Dashboard, MyWork, Tickets, ReviewQueue, NewTicket, 
                     ActionBar, Conversation, Timeline, CopilotPanel, Retrieval), api/, auth/
 tests/backend/      pytest (AI components, API, auth/permissions, lifecycle, routing, copilot, retrieval, dashboard)
 tests/e2e/          Playwright end-to-end test of the full complaint flow
-docs/               DATA_PROFILE.md, ARCHITECTURE.md, PRIORITY_RULES.md, ROUTING_RULES.md, EVENTS.md
+docs/               DATA_PROFILE.md, ARCHITECTURE.md, PRIORITY_RULES.md, ROUTING_RULES.md, EVENTS.md, SLA.md
 scripts/dev.ps1     all developer commands
 ```
 

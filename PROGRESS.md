@@ -15,8 +15,8 @@ and committed locally before the next one starts.
 | 6 | Copilot completion — root cause, prompt_version, accept / regenerate / discard | ✅ |
 | 7 | Retrieval — MiniLM embeddings, HNSW, hybrid search, similar tickets, knowledge base, RAG | ✅ |
 | 8 | Events — Kafka (KRaft) + UI, outbox relay, 4 workers, idempotency, retries, DLQ + replay | ✅ |
-| 9 | SLA engine — policies, pause rule, warning/breach once, auto-escalation, live badge, demo speed-up | ⏳ next |
-| 10 | Notifications — table, SSE via Redis pub/sub, bell, page, toasts, optional SMTP | ⏳ |
+| 9 | SLA engine — policies, pause rule, warning/breach once, auto-escalation, live badge, demo speed-up | ✅ |
+| 10 | Notifications — table, SSE via Redis pub/sub, bell, page, toasts, optional SMTP | ⏳ next |
 | 11 | Analytics completion — SLA/timing/repeat/city/product/workload, day/week/month, My stats | ⏳ |
 | 12 | AI triage gaps — spaCy entities, DistilBERT comparison | ⏳ |
 | 13 | Production — rate limits, headers, metrics, Grafana, Dockerfiles, Makefile, CI (Trivy, GHCR), docs | ⏳ |
@@ -56,11 +56,14 @@ and committed locally before the next one starts.
   Kafka UI (http://localhost:18090); `.\scripts\dev.ps1 workers` runs the outbox relay + AI / LLM / SLA / notification
   workers (`start` opens API, workers and web). Ticket creation returns NEW at once; the AI worker triages, routes and
   embeds; the LLM worker drafts the copilot answer (`COPILOT_AUTO`). Unit tests run `EVENTS_MODE=inline`.
-- The SLA worker and the notification worker are subscribed (their topics, groups, idempotency and DLQ work) but
-  their handlers are pass-throughs until steps 9 (SLA engine) and 10 (notifications) — by plan.
-- Next: step 9 (SLA engine: sla_policies CRUD, deadlines from priority/category, pause while WAITING_CUSTOMER,
-  sla_events started/warning/breached/paused once each, auto-escalation on breach, live countdown badge, demo
-  speed-up).
+- SLA ([docs/SLA.md](docs/SLA.md)): the SLA worker starts / pauses / resumes / re-targets / stops clocks and runs the
+  scanner (`sla.warning` at 80 %, `sla.breached` at 100 %, once each); a breach escalates automatically. Demo:
+  `SLA_SPEEDUP=120` for the workers. Inline mode (no workers) runs the scanner in the API process.
+- The notification worker is subscribed (topics, group, idempotency, DLQ work) but its handler is a pass-through
+  until step 10 — by plan.
+- Next: step 10 (notifications: `notifications` table, notification worker writes them for ticket.assigned /
+  escalated / sla.warning / sla.breached, SSE stream via Redis pub/sub, bell + unread count, Notifications page,
+  toasts, `POST /notifications/{id}/read`, optional SMTP e-mail).
 
 ## Step log
 
@@ -274,3 +277,35 @@ and committed locally before the next one starts.
   status, LLM auto-draft and its outage → DLQ → replay; 4 Kafka integration tests on the real broker: full flow,
   duplicate delivery processed once, retries → DLQ topic → replay through Kafka, relay keeps events during an outage),
   53 frontend (5 new), Playwright e2e on Kafka + all workers (run twice).
+
+### Step 9 — SLA engine ✅
+- `app/domain/sla.py` (pure, unit-tested): Clock with elapsed / deadline / remaining / ratio, the pause rule (deadline
+  moves out by the time waited; pauses add up; a paused clock never fires), stop (met / breached), reopen (resolved time
+  excluded), re-target, states running / at_risk (80 %) / paused / breached / met, demo speed-up.
+- Migration `0009`: `sla_policies` (one default per priority: Critical 2 h, High 8 h, Medium 24 h, Low 3 days; unique
+  per priority + category), `sla_events`, the SLA clock on tickets (policy, target, started, deadline, paused, stopped,
+  warned, breached, status) with a partial index for the scanner. History scored against the defaults from real
+  timestamps: Critical 28 % breached, High 11 %, Medium 3 %, Low 0.4 % (6 s for 85,907 rows). Round-trip + check clean;
+  the backfill is tested through a real downgrade / upgrade.
+- `app/services/sla.py` + SLA worker: start on ai.analysis.completed (clock from creation; most specific active
+  policy), pause / resume / reopen on ticket.updated, re-target on a category change, stop on ticket.resolved, scanner
+  every `SLA_SCAN_SECONDS` (row locks + timestamps = once each, safe with several scanners), automatic escalation on
+  sla.breached (escalation refactored into a stage-only core shared with the API). Timeline + sla_events for every
+  change; sla.warning / sla.breached go through the outbox.
+- API: CRUD `/sla-policies` (Admin, audited; defaults can't be deleted or switched off), `sla` view on every ticket in
+  lists and details, queue filters `sla=at_risk|breached|paused|running` and sort `sla` (due soonest),
+  `GET /analytics/sla` (breach rate overall / by priority / category / team / over time, resolution vs target, open at
+  risk / breached / paused).
+- Frontend: live SLA badge (green → amber at 80 % → red, grey when paused, "SLA met"; crosses thresholds in the
+  browser), SLA card with a progress bar, queue views "SLA at risk" / "SLA breached" + sort, My work at-risk / breached
+  tiles and deadline order, Admin **SLA policies** page, dashboard SLA panel (stat tiles + ranked breach-rate bars,
+  following the dataviz guidance), timeline wording for every SLA event.
+- Bug found by the e2e run and fixed: after Resolve the page kept showing "On track" because the SLA worker stops the
+  clock a moment later and nothing refreshed — the workspace now refreshes while the clock lags the ticket's state.
+- Checked by hand with real Kafka and `SLA_SPEEDUP=120`: a Critical ticket's 60-second SLA started at triage, warned at
+  50 s (80 %), breached at 60 s and was escalated automatically by the SLA worker; screenshots of the at-risk countdown
+  and the dashboard SLA panel (breach rate 4.7 % over the last 30 days; Refunds Desk highest).
+- Tests: 256 backend (16 SLA tests incl. the maths, policy specificity, pause/resume, warning/breach once +
+  auto-escalation, paused clocks never breach, met / late / reopen, re-target, speed-up, policy CRUD permissions,
+  queue filters, analytics, history backfill; + a Kafka integration test of breach → escalation through the broker),
+  61 frontend (8 new), Playwright e2e checks the live SLA badge, the policy and "SLA met".

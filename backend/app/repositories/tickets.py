@@ -23,6 +23,7 @@ from app.models import (
 )
 
 PRIORITY_ORDER = ["Low", "Medium", "High", "Critical"]
+OPEN = ["NEW", "TRIAGED", "ASSIGNED", "IN_PROGRESS", "WAITING_CUSTOMER", "ESCALATED"]
 
 
 def priority_rank(column: Any = Ticket.priority) -> Any:
@@ -65,6 +66,7 @@ def _filtered(
     unassigned: bool = False,
     team_id: int | None = None,
     escalated: bool | None = None,
+    sla: str | None = None,
 ) -> Select[tuple[Ticket]]:
     stmt = select(Ticket)
     if visible is not None:
@@ -98,7 +100,24 @@ def _filtered(
         stmt = stmt.where(Ticket.needs_review.is_(needs_review))
     if escalated is not None:
         stmt = stmt.where(Ticket.escalated_at.is_not(None) if escalated else Ticket.escalated_at.is_(None))
+    if sla:
+        stmt = stmt.where(sla_clause(sla))
     return stmt
+
+
+def sla_clause(state: str) -> ColumnElement[bool]:
+    """SLA queue views: at_risk (80 %+ used, not breached), breached, paused, running — open tickets only."""
+    from datetime import UTC, datetime
+
+    open_ = Ticket.status.in_(OPEN)
+    if state == "breached":
+        return open_ & Ticket.sla_breached_at.is_not(None)
+    if state == "paused":
+        return open_ & (Ticket.sla_status == "paused")
+    if state == "running":
+        return open_ & (Ticket.sla_status == "running")
+    warn_at = Ticket.sla_deadline - func.make_interval(0, 0, 0, 0, 0, 0, Ticket.sla_target_seconds * 0.2)
+    return open_ & (Ticket.sla_status == "running") & Ticket.sla_breached_at.is_(None) & (warn_at <= datetime.now(UTC))
 
 
 async def search(
@@ -116,6 +135,7 @@ async def search(
         "priority": (priority_rank().desc(), Ticket.created_at.desc()),
         "oldest": (Ticket.created_at.asc(), Ticket.id.asc()),
         "updated": (Ticket.updated_at.desc(), Ticket.id.desc()),
+        "sla": (Ticket.sla_deadline.asc().nulls_last(), Ticket.id.asc()),  # due soonest
     }.get(sort, (Ticket.created_at.desc(), Ticket.id.desc()))
     rows = await db.scalars(stmt.order_by(*order).limit(page_size).offset((page - 1) * page_size))
     return list(rows.unique().all()), total

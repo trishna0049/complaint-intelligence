@@ -1,4 +1,4 @@
-import { ArrowUpCircle, Bot, CheckCircle2, Clock, FilePlus2, History, Inbox, MessageSquare, PencilLine, PlusCircle, Route, ShieldQuestion, Sparkles, UserPlus } from "lucide-react";
+import { AlarmClock, ArrowUpCircle, Bot, CheckCircle2, Clock, FilePlus2, History, Inbox, MessageSquare, PauseCircle, PencilLine, PlusCircle, Route, ShieldQuestion, Sparkles, Timer, UserPlus } from "lucide-react";
 import type { ReactNode } from "react";
 import type { TimelineEvent } from "@/api/types";
 import { Card, CardHeader } from "@/components/ui";
@@ -58,6 +58,20 @@ function describe(e: TimelineEvent): { icon: ReactNode; text: ReactNode; detail?
           return { icon: <Route className="h-3.5 w-3.5" />, text: <>{by}not routed</>, detail: reason };
       }
     }
+    case "sla_started":
+      return { icon: <Timer className="h-3.5 w-3.5 text-emerald-600" />, text: <>SLA clock started: <b>{str(m.policy)}</b></>, detail: m.deadline ? `Due ${fmtDateTime(str(m.deadline))}` : undefined };
+    case "sla_paused":
+      return { icon: <PauseCircle className="h-3.5 w-3.5" />, text: <>SLA paused while waiting on the customer</> };
+    case "sla_resumed":
+      return { icon: <Timer className="h-3.5 w-3.5" />, text: <>SLA resumed{m.reopened ? " after the reopen" : ""}</>, detail: m.deadline ? `Now due ${fmtDateTime(str(m.deadline))}` : undefined };
+    case "sla_retargeted":
+      return { icon: <Timer className="h-3.5 w-3.5" />, text: <>SLA re-targeted to <b>{str(m.policy)}</b></>, detail: m.deadline ? `Due ${fmtDateTime(str(m.deadline))}` : undefined };
+    case "sla_warning":
+      return { icon: <AlarmClock className="h-3.5 w-3.5 text-amber-600" />, text: <><b>SLA warning</b>: 80 % of the time used</>, detail: m.deadline ? `Due ${fmtDateTime(str(m.deadline))}` : undefined };
+    case "sla_breached":
+      return { icon: <AlarmClock className="h-3.5 w-3.5 text-rose-600" />, text: <><b className="text-rose-700">SLA breached</b></> };
+    case "sla_stopped":
+      return { icon: <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />, text: <>SLA {m.outcome === "met" ? "met" : "closed as breached"}</> };
     case "category_confirmed":
       return { icon: <CheckCircle2 className="h-3.5 w-3.5 text-violet-500" />, text: <><b>{who}</b> confirmed the AI category <b>{str(m.category)}</b></> };
     case "category_corrected":

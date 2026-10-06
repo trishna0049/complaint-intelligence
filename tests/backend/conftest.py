@@ -48,7 +48,8 @@ from app.auth.security import create_access_token, hash_password  # noqa: E402
 from app.core.config import BACKEND_DIR, get_settings  # noqa: E402
 from app.core.db import Base, SessionLocal, dispose_engine  # noqa: E402
 from app.core.redis import close_redis, get_redis  # noqa: E402
-from app.models import Category, Department, Team, User  # noqa: E402
+from app.models import Category, Department, SlaPolicy, Team, User  # noqa: E402
+from app.services.sla_policies import DEFAULT_POLICIES  # noqa: E402
 from scripts import seed as seed_script  # noqa: E402
 
 get_settings.cache_clear()
@@ -166,6 +167,7 @@ async def seed_org() -> Org:
             team_id=teams["Returns & Pickups"].id,
         )
         db.add_all([admin, agent, other])
+        db.add_all(SlaPolicy(name=n, priority=p, target_minutes=m) for n, p, m in DEFAULT_POLICIES)
         await db.commit()
         return Org(admin, agent, other, teams)
 

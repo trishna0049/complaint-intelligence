@@ -13,6 +13,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { SlaPanel } from "@/components/SlaPanel";
 import { useCategoryBreakdowns, useEmerging, useOverview, useTrends } from "@/api/client";
 import type { Breakdown, EmergingIssue, Granularity } from "@/api/types";
 import { PriorityBadge, SentimentBadge } from "@/components/Badges";
@@ -86,6 +87,8 @@ export function DashboardPage() {
               </ul>
             </div>
           </Card>
+
+          <SlaPanel days={days} />
 
           <div className="grid gap-5 xl:grid-cols-2">
             <ChartCard title="Ticket volume" subtitle={`Per ${granularity} — all tickets vs high/critical priority`}

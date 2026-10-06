@@ -50,6 +50,10 @@ test("ticket is triaged, summarised, tracked on the dashboard and resolved", asy
   await expect(timeline).toContainText("in Payments Support");
   await expect(page.getByText(/Least busy of \d+ available agents in Payments Support/).first()).toBeVisible();
 
+  // 3b'. SLA: the SLA worker started the clock — Critical gets 2 hours, counting down live.
+  await expect(page.getByText(/On track · 1h 5\dm left/).first()).toBeVisible();
+  await expect(page.getByText("Critical — 2 hours").first()).toBeVisible(); // SLA card (and the timeline)
+
   // 3c. Retrieval: the seeded knowledge base (MiniLM + full text) offers the duplicate-payment article.
   const help = page.getByRole("list", { name: "Help articles" });
   await expect(help.getByRole("link").first()).toContainText("Duplicate or double payment for one order");
@@ -129,13 +133,14 @@ test("ticket is triaged, summarised, tracked on the dashboard and resolved", asy
   await resolve.getByRole("button", { name: "Resolve" }).click();
   await expect(resolve).toBeHidden();
   await expect(page.getByText("Reversed the duplicate ₹12,500 debit.").first()).toBeVisible();
+  await expect(page.getByText("SLA met").first()).toBeVisible(); // resolved within the 2 hours
   await actions.getByRole("button", { name: "Close" }).click();
   await expect(actions.getByRole("button", { name: "Reopen" })).toBeVisible();
 
   for (const text of ["created the ticket", "AI triage: Payments related", "Routing rules: assigned to", "LLM worker drafted",
     "accepted the AI draft after editing it", "assigned it to",
     "to In progress", "commented",
-    "attached statement.txt", "to Resolved", "to Closed"]) {
+    "attached statement.txt", "to Resolved", "to Closed", "SLA clock started", "SLA met"]) {
     await expect(timeline).toContainText(text);
   }
 

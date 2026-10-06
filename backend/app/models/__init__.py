@@ -4,6 +4,7 @@ from app.models.auth import AuditLog, RefreshToken
 from app.models.events import DeadLetter, OutboxEvent, ProcessedEvent
 from app.models.org import ROLES, Category, Department, Team, User
 from app.models.retrieval import KnowledgeArticle, TicketEmbedding
+from app.models.sla import SlaEvent, SlaPolicy
 from app.models.ticket import (
     CUSTOMER_CODE_SEQ,
     TICKET_NUMBER_SEQ,
@@ -29,6 +30,8 @@ __all__ = [
     "OutboxEvent",
     "ProcessedEvent",
     "RefreshToken",
+    "SlaEvent",
+    "SlaPolicy",
     "Team",
     "Ticket",
     "TicketAttachment",

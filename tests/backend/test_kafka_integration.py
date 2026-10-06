@@ -227,3 +227,32 @@ async def test_relay_keeps_events_until_kafka_accepts_them(client, org, monkeypa
     async with SessionLocal() as db:
         row = await db.scalar(select(OutboxEvent).where(OutboxEvent.ticket_id == t["id"]))
     assert row.published_at is not None and row.publish_attempts == 2
+
+
+async def test_sla_breach_escalates_through_kafka(client, org, pipeline):
+    """SLA worker via the broker: the clock starts on ai.analysis.completed; a breach found by the scanner goes out as
+    sla.breached and comes back to the SLA worker, which escalates the ticket automatically."""
+    from datetime import timedelta
+
+    from app.services import sla
+
+    t = (await client.post("/api/v1/tickets", json=PAYMENTS)).json()
+
+    async def clock_started() -> bool:
+        async with SessionLocal() as db:
+            return (await db.get(Ticket, t["id"])).sla_started_at is not None
+
+    await wait_for(clock_started, what="the SLA worker to start the clock")
+    async with SessionLocal() as db:
+        row = await db.get(Ticket, t["id"])
+        row.sla_started_at -= timedelta(hours=3)
+        row.sla_deadline -= timedelta(hours=3)
+        await db.commit()
+    assert (await sla.scan_once())["breached"] == 1
+    await wait_for(lambda: _is(t["id"], "ESCALATED"), what="automatic escalation by the SLA worker")
+    assert (
+        await count(
+            ProcessedEvent, ProcessedEvent.consumer == "sla-worker", ProcessedEvent.event_type == "sla.breached"
+        )
+        == 1
+    )

@@ -1,6 +1,8 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
   Analysis,
+  SlaAnalytics,
+  SlaPolicy,
   DeadLetter,
   PipelineStatus,
   Article,
@@ -53,7 +55,18 @@ export const useEmerging = () =>
 export const useTickets = (query: Query) =>
   useQuery({ queryKey: ["tickets", query], queryFn: () => api<Page<Ticket>>("/tickets", { query }), ...keep });
 
-/** While the AI worker triages or the LLM worker drafts, the ticket is refreshed every 1.5 s (for at most 3 min). */
+/** The SLA worker reacts to a change a moment later: the clock hasn't caught up with the ticket's state yet. */
+function slaLagging(t: TicketDetail): boolean {
+  const state = t.sla?.state ?? "none";
+  const done = t.status === "RESOLVED" || t.status === "CLOSED";
+  if (done) return state === "running" || state === "at_risk" || state === "paused";
+  if (t.status === "WAITING_CUSTOMER") return state !== "paused" && state !== "breached" && state !== "none";
+  if (t.status === "NEW") return false;
+  return state === "none" || state === "paused" || state === "met";
+}
+
+/** While the AI worker triages, the LLM worker drafts or the SLA worker catches up, the ticket is refreshed every
+ * 1.5 s (for a bounded time). */
 export const useTicket = (id: number) =>
   useQuery({
     queryKey: ["ticket", id],
@@ -61,8 +74,10 @@ export const useTicket = (id: number) =>
     enabled: Number.isFinite(id),
     refetchInterval: (query) => {
       const t = query.state.data;
-      const working = t && (t.pipeline?.triage === "pending" || t.pipeline?.copilot === "drafting");
-      return working && Date.now() - new Date(t.created_at).getTime() < 180_000 ? 1500 : false;
+      if (!t) return false;
+      const working = t.pipeline?.triage === "pending" || t.pipeline?.copilot === "drafting";
+      if (working && Date.now() - new Date(t.created_at).getTime() < 180_000) return 1500;
+      return slaLagging(t) && Date.now() - new Date(t.updated_at).getTime() < 60_000 ? 1500 : false;
     },
   });
 
@@ -226,6 +241,24 @@ export const useUpdateArticle = (id: number) =>
   useArticleChange((body: Partial<ArticleInput>) => api<Article>(`/knowledge/${id}`, { method: "PATCH", body }));
 export const useDeleteArticle = (id: number) =>
   useArticleChange(() => api<undefined>(`/knowledge/${id}`, { method: "DELETE" }));
+
+// ------------------------------------------------------------------ SLA
+export const useSlaPolicies = () => useQuery({ queryKey: ["sla-policies"], queryFn: () => api<SlaPolicy[]>("/sla-policies") });
+
+function useSlaPolicyChange<TVars>(request: (vars: TVars) => Promise<unknown>) {
+  const qc = useQueryClient();
+  return useMutation({ mutationFn: request, onSuccess: () => void qc.invalidateQueries({ queryKey: ["sla-policies"] }) });
+}
+
+export const useCreateSlaPolicy = () =>
+  useSlaPolicyChange((body: Omit<SlaPolicy, "id" | "created_at" | "updated_at">) => api<SlaPolicy>("/sla-policies", { method: "POST", body }));
+export const useUpdateSlaPolicy = () =>
+  useSlaPolicyChange(({ id, ...body }: { id: number; name?: string; target_minutes?: number; is_active?: boolean }) =>
+    api<SlaPolicy>(`/sla-policies/${id}`, { method: "PATCH", body }));
+export const useDeleteSlaPolicy = () => useSlaPolicyChange((id: number) => api<undefined>(`/sla-policies/${id}`, { method: "DELETE" }));
+
+export const useSlaAnalytics = (days: number) =>
+  useQuery({ queryKey: ["analytics", "sla", days], queryFn: () => api<SlaAnalytics>("/analytics/sla", { query: { days } }), ...keep });
 
 // ------------------------------------------------------------------ admin: event pipeline and DLQ
 export const usePipelineStatus = () =>

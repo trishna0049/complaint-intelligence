@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -16,6 +17,7 @@ from app.api.v1 import api_router
 from app.core.config import get_settings
 from app.core.db import dispose_engine
 from app.core.redis import close_redis
+from app.services import sla
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
@@ -26,7 +28,16 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     get_classifier()
     load_sentiment()
     get_embedder()
+    # Inline events (no Kafka workers): the API process runs the SLA scanner itself. Tests drive it directly.
+    s = get_settings()
+    stop = asyncio.Event()
+    scanner = (
+        asyncio.create_task(sla.scan_forever(stop)) if s.events_mode == "inline" and s.environment != "test" else None
+    )
     yield
+    stop.set()
+    if scanner is not None:
+        await scanner
     await dispose_engine()
     await close_redis()
 

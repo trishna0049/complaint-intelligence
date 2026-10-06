@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { useTicketSummary, useTickets } from "@/api/client";
 import type { Status } from "@/api/types";
 import { useAuth } from "@/auth/useAuth";
+import { SlaBadge } from "@/components/Sla";
 import { TicketPriority, StatusBadge } from "@/components/Badges";
 import { Button, Card, CardHeader, EmptyState, ErrorState, PageHeader, Skeleton } from "@/components/ui";
 import { fmtRelative } from "@/lib/format";
@@ -14,7 +15,9 @@ export function MyWorkPage() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const summary = useTicketSummary({ assignee: "me" });
-  const mine = useTickets({ assignee: "me", status: "open", sort: "priority", page_size: 50 });
+  const atRisk = useTickets({ assignee: "me", sla: "at_risk", page_size: 1 });
+  const breached = useTickets({ assignee: "me", sla: "breached", page_size: 1 });
+  const mine = useTickets({ assignee: "me", status: "open", sort: "sla", page_size: 50 });
   const teamBacklog = useTickets(
     user?.team ? { assignee: "none", status: "open", team_id: user.team.id, page_size: 1 } : { assignee: "none", status: "open", page_size: 1 },
   );
@@ -24,11 +27,13 @@ export function MyWorkPage() {
     <>
       <PageHeader
         title="My work"
-        description={`Hi ${firstName} — your open tickets, highest priority first.`}
+        description={`Hi ${firstName} — your open tickets, the SLA due soonest first.`}
         actions={<Link to="/tickets/new"><Button variant="secondary" icon={<Plus className="h-4 w-4" />}>Create ticket</Button></Link>}
       />
-      <div className="mb-5 grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-6">
+      <div className="mb-5 grid grid-cols-2 gap-4 md:grid-cols-4 xl:grid-cols-8">
         <Tile label="Open" value={summary.data?.open} loading={summary.isLoading} strong />
+        <Tile label="SLA at risk" value={atRisk.data?.total} loading={atRisk.isLoading} warn={(atRisk.data?.total ?? 0) > 0} />
+        <Tile label="SLA breached" value={breached.data?.total} loading={breached.isLoading} warn={(breached.data?.total ?? 0) > 0} />
         {TILES.map((s) => <Tile key={s} label={statusLabel(s)} value={summary.data?.by_status[s]} loading={summary.isLoading} />)}
       </div>
 
@@ -52,6 +57,7 @@ export function MyWorkPage() {
                       <div className="flex items-center gap-2">
                         <span className="font-mono text-xs text-slate-500">{t.ticket_number}</span>
                         <StatusBadge status={t.status} />
+                        <SlaBadge sla={t.sla} compact />
                       </div>
                       <p className="mt-0.5 truncate text-sm font-medium text-slate-900">{t.subject}</p>
                       <p className="text-xs text-slate-500">{t.category ?? "Uncategorised"} · updated {fmtRelative(t.updated_at)}</p>
@@ -83,12 +89,12 @@ export function MyWorkPage() {
   );
 }
 
-function Tile({ label, value, loading, strong }: { label: string; value: number | undefined; loading: boolean; strong?: boolean }) {
+function Tile({ label, value, loading, strong, warn }: { label: string; value: number | undefined; loading: boolean; strong?: boolean; warn?: boolean }) {
   return (
     <Card className="px-4 py-3">
       <p className="text-xs font-medium text-slate-500">{label}</p>
       {loading ? <Skeleton className="mt-2 h-7 w-12" /> : (
-        <p className={`mt-1 text-2xl font-semibold tracking-tight ${strong ? "text-brand-700" : "text-slate-900"}`}>{(value ?? 0).toLocaleString()}</p>
+        <p className={`mt-1 text-2xl font-semibold tracking-tight ${warn ? "text-rose-600" : strong ? "text-brand-700" : "text-slate-900"}`}>{(value ?? 0).toLocaleString()}</p>
       )}
     </Card>
   );

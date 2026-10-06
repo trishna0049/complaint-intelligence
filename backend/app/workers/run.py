@@ -27,6 +27,7 @@ from app.core.config import get_settings
 from app.core.db import dispose_engine
 from app.core.redis import close_redis
 from app.events import kafka
+from app.services import sla
 from app.workers.registry import BY_NAME
 
 CRLF = chr(13) + chr(10)
@@ -70,6 +71,8 @@ async def main(command: str, reset: bool, health_port: int | None = None) -> Non
     names = list(SHORT.values()) if command == "all" else [SHORT[command]] if command in SHORT else []
     for name in names:
         tasks.append(asyncio.create_task(kafka.run_consumer(BY_NAME[name], stop), name=name))
+    if "sla-worker" in names:  # the SLA worker also scans for warnings (80 %) and breaches (100 %)
+        tasks.append(asyncio.create_task(sla.scan_forever(stop), name="sla-scanner"))
     logging.getLogger("app.workers").info("running %s (pid %s)", ", ".join(t.get_name() for t in tasks), os.getpid())
     health = await serve_health(health_port, tasks) if health_port else None
     try:

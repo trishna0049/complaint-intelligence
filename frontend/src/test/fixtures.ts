@@ -15,6 +15,11 @@ export const ticket: TicketDetail = {
   labels_from: "model", model_version: "triage-v1", copilot: null, customer: null,
   comments: [], attachments: [], previous_tickets: [], allowed_actions: ["assign", "escalate"], can_view: true,
   pipeline: { triage: "done", copilot: "manual" },
+  sla: {
+    state: "running", deadline: new Date(Date.now() + 90 * 60_000).toISOString(), remaining_seconds: 5400, ratio: 0.25,
+    target_seconds: 7200, paused: false, started_at: new Date(Date.now() - 30 * 60_000).toISOString(), breached_at: null,
+    warned_at: null, policy: { id: 1, name: "Critical — 2 hours", target_minutes: 120 },
+  },
   top_categories: [["Payments related", 0.82], ["Refund Related", 0.1]],
   timeline: [
     { id: 1, event_type: "created", actor: { id: 1, name: "Ada Admin" }, metadata: { channel: "Email" }, created_at: new Date().toISOString() },

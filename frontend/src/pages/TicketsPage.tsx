@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useCategories, useTeams, useTickets } from "@/api/client";
 import { TicketPriority, SentimentBadge, StatusBadge } from "@/components/Badges";
+import { SlaBadge } from "@/components/Sla";
 import { Avatar, Badge, Button, Card, EmptyState, ErrorState, Input, PageHeader, Select, Skeleton } from "@/components/ui";
 import { useAuth } from "@/auth/useAuth";
 import { SENTIMENTS } from "@/lib/colors";
@@ -14,6 +15,8 @@ const VIEWS = [
   { id: "open", label: "All open", query: { status: "open" } },
   { id: "unassigned", label: "Unassigned", query: { status: "open", assignee: "none" } },
   { id: "mine", label: "Assigned to me", query: { status: "open", assignee: "me" } },
+  { id: "sla_risk", label: "SLA at risk", query: { sla: "at_risk", sort: "sla" } },
+  { id: "sla_breached", label: "SLA breached", query: { sla: "breached", sort: "sla" } },
   { id: "escalated", label: "Escalated", query: { status: "ESCALATED" } },
   { id: "review", label: "Needs review", query: { status: "open", needs_review: "true" } },
   { id: "done", label: "Resolved & closed", query: { status: "RESOLVED,CLOSED" } },
@@ -113,6 +116,7 @@ export function TicketsPage() {
             <option value="newest">Newest first</option>
             <option value="updated">Recently updated</option>
             <option value="priority">Highest priority</option>
+            <option value="sla">SLA due soonest</option>
             <option value="oldest">Oldest first</option>
           </Select>
           {(hasFilters || legacyStatus) && (
@@ -135,7 +139,7 @@ export function TicketsPage() {
               <table className="table-base">
                 <thead>
                   <tr>
-                    <th>Ticket</th><th>Subject</th><th>Category / intent</th><th>Sentiment</th><th>Priority</th><th>Status</th><th>Assignee</th>
+                    <th>Ticket</th><th>Subject</th><th>Category / intent</th><th>Sentiment</th><th>Priority</th><th>SLA</th><th>Status</th><th>Assignee</th>
                     <th className="text-right">Updated</th>
                   </tr>
                 </thead>
@@ -158,6 +162,7 @@ export function TicketsPage() {
                       </td>
                       <td><SentimentBadge sentiment={t.sentiment} /></td>
                       <td><TicketPriority priority={t.priority} status={t.status} /></td>
+                      <td className="whitespace-nowrap"><SlaBadge sla={t.sla} compact /></td>
                       <td><StatusBadge status={t.status} /></td>
                       <td className="max-w-[180px]">
                         {t.assignee ? (

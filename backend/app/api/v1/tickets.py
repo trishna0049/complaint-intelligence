@@ -31,6 +31,7 @@ from app.schemas.tickets import (
     TicketDetail,
     TicketListItem,
     TicketUpdate,
+    sla_view,
 )
 from app.services import retrieval, storage
 from app.services import tickets as svc
@@ -43,6 +44,7 @@ Db = Depends(get_session)
 async def to_detail(db: AsyncSession, user: User, t: Ticket) -> TicketDetail:
     bundle = await svc.detail_bundle(db, user, t)
     detail = TicketDetail.model_validate(t)
+    detail.sla = sla_view(t)
     detail.copilot = AnalysisOut.model_validate(bundle["copilot"]) if bundle["copilot"] else None
     detail.comments = [CommentOut.model_validate(c) for c in bundle["comments"]]
     detail.attachments = [AttachmentOut.model_validate(a) for a in bundle["attachments"]]
@@ -76,6 +78,7 @@ def _filters(
     assignee: str | None = Query(default=None, pattern=r"^(me|none|\d+)$"),
     team_id: int | None = None,
     escalated: bool | None = None,
+    sla: str | None = Query(default=None, pattern="^(at_risk|breached|paused|running)$"),
 ) -> dict[str, Any]:
     return {
         "q": q,
@@ -89,6 +92,7 @@ def _filters(
         "assignee": assignee,
         "team_id": team_id,
         "escalated": escalated,
+        "sla": sla,
     }
 
 
@@ -102,12 +106,13 @@ async def list_tickets(
     user: CurrentUser,
     db: AsyncSession = Db,
     filters: dict[str, Any] = Depends(_filters),
-    sort: str = Query(default="newest", pattern="^(newest|oldest|priority|updated)$"),
+    sort: str = Query(default="newest", pattern="^(newest|oldest|priority|updated|sla)$"),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=25, ge=1, le=100),
 ) -> Page[TicketListItem]:
     items, total = await svc.list_tickets(db, user, sort=sort, page=page, page_size=page_size, **filters)
-    return Page(items=[TicketListItem.model_validate(t) for t in items], total=total, page=page, page_size=page_size)
+    rows = [TicketListItem.model_validate(t).model_copy(update={"sla": sla_view(t)}) for t in items]
+    return Page(items=rows, total=total, page=page, page_size=page_size)
 
 
 @router.get("/summary")

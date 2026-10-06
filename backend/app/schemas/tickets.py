@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.domain.lifecycle import Status
 from app.schemas.auth import TeamRef
+from app.schemas.sla import SlaPolicyRef, SlaView
 
 Channel = Literal["Web", "Email", "Inbound", "Outcall"]
 
@@ -107,6 +108,7 @@ class TicketListItem(BaseModel):
     updated_at: datetime
     # The classifier's top categories from the latest triage run, e.g. [["Refund Related", 0.41], ...].
     top_categories: list[tuple[str, float]] = []
+    sla: SlaView | None = None  # set by the API from the ticket's clock (app.services.sla.view)
 
 
 class AnalysisOut(BaseModel):
@@ -227,3 +229,9 @@ class TicketDetail(TicketListItem):
     can_view: bool = True
     # Background work for this ticket (Kafka workers): triage pending|done|failed, copilot ready|drafting|failed|manual
     pipeline: dict[str, str] = {}
+
+
+def sla_view(t: Any) -> SlaView:
+    from app.services.sla import view
+
+    return SlaView(**view(t), policy=SlaPolicyRef.model_validate(t.sla_policy) if t.sla_policy else None)

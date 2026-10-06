@@ -40,6 +40,56 @@ export interface Ticket {
   updated_at: string;
   /** The classifier's top categories from the latest triage run, best first. */
   top_categories: [string, number][];
+  sla: SlaView | null;
+}
+
+export type SlaState = "none" | "running" | "at_risk" | "paused" | "breached" | "met";
+
+/** The ticket's SLA clock; the live countdown is computed in the browser from `deadline`. */
+export interface SlaView {
+  state: SlaState;
+  deadline: string | null;
+  remaining_seconds: number | null;
+  ratio: number | null;
+  target_seconds: number | null;
+  paused: boolean;
+  started_at: string | null;
+  breached_at: string | null;
+  warned_at: string | null;
+  policy: { id: number; name: string; target_minutes: number } | null;
+}
+
+export interface SlaPolicy {
+  id: number;
+  name: string;
+  priority: Priority;
+  category: string | null;
+  target_minutes: number;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SlaBreakdown {
+  name: string;
+  with_sla: number;
+  breached: number;
+  breach_rate: number | null;
+}
+
+export interface SlaAnalytics {
+  window_days: number;
+  with_sla: number;
+  breached: number;
+  met: number;
+  breach_rate: number | null;
+  avg_resolution_minutes: number | null;
+  avg_target_minutes: number | null;
+  open: { at_risk: number; breached: number; paused: number; running: number };
+  by_priority: SlaBreakdown[];
+  by_category: SlaBreakdown[];
+  by_team: SlaBreakdown[];
+  trend: { date: string; with_sla: number; breached: number; breach_rate: number | null }[];
 }
 
 export interface Entities {

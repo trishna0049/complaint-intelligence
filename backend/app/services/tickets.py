@@ -479,14 +479,17 @@ async def change_status(db: AsyncSession, user: User, ticket_id: int, target: st
     return await get_ticket(db, user, t.id)
 
 
-async def escalate(db: AsyncSession, user: User | None, ticket_id: int, reason: str, *, auto: bool = False) -> Ticket:
-    """Manual escalation (agent / admin) or automatic (SLA breach, user=None)."""
-    if user is None:
-        t = await repo.get(db, ticket_id, for_update=True)
-        if t is None:
-            raise NOT_FOUND
-    else:
-        t = await _load_for_change(db, user, ticket_id, Action.ESCALATE)
+async def escalate(db: AsyncSession, user: User, ticket_id: int, reason: str) -> Ticket:
+    """Manual escalation by an agent or an Admin."""
+    t = await _load_for_change(db, user, ticket_id, Action.ESCALATE)
+    stage_escalation(db, t, user, reason, auto=False)
+    await commit(db)
+    return await get_ticket(db, user, t.id)
+
+
+def stage_escalation(db: AsyncSession, t: Ticket, user: User | None, reason: str, *, auto: bool) -> None:
+    """Escalate `t` (row locked by the caller) in the caller's transaction — used by the API and by the SLA worker's
+    automatic escalation on breach (user None). Raises 409 if the state machine doesn't allow it."""
     new_status = _transition(t, Action.ESCALATE)
     t.escalated_at = _now()
     _status_change(db, t, new_status, user, Action.ESCALATE, reason=reason, auto=auto)
@@ -499,8 +502,6 @@ async def escalate(db: AsyncSession, user: User | None, ticket_id: int, reason: 
         resource_id=t.id,
         metadata={"ticket": t.ticket_number, "reason": reason, "auto": auto},
     )
-    await commit(db)
-    return t if user is None else await get_ticket(db, user, t.id)
 
 
 async def resolve(db: AsyncSession, user: User, ticket_id: int, resolution: str) -> Ticket:

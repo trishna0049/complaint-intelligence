@@ -108,7 +108,7 @@ async def test_full_lifecycle_through_the_api(client, org):
     # Created, triaged and routed in one go: Payments related -> Payments Support -> its only agent.
     t = await create(client)
     assert t["created_at"]
-    assert [e["event_type"] for e in t["timeline"]] == ["created", "triaged", "routed", "status_changed"]
+    assert [e["event_type"] for e in t["timeline"]] == ["created", "triaged", "routed", "status_changed", "sla_started"]
     assert t["timeline"][1]["metadata"]["category"] == "Payments related"
     assert (
         t["status"] == "ASSIGNED" and t["assignee"]["name"] == "Arjun Agent" and t["team"]["name"] == "Payments Support"
@@ -162,7 +162,8 @@ async def test_invalid_moves_return_409_and_change_nothing(client, org):
     assert (await client.patch(f"/api/v1/tickets/{tid}", json={"status": "WAITING_CUSTOMER"})).status_code == 409
     assert (await client.post(f"/api/v1/tickets/{tid}/reopen", json={"reason": "why not"})).status_code == 409
     detail = (await client.get(f"/api/v1/tickets/{tid}")).json()
-    assert detail["status"] == "TRIAGED" and len(detail["timeline"]) == 3  # created, triaged, routed
+    kinds = [e["event_type"] for e in detail["timeline"]]
+    assert detail["status"] == "TRIAGED" and kinds == ["created", "triaged", "routed", "sla_started"]  # unchanged
     bad = await client.patch(f"/api/v1/tickets/{tid}", json={"status": "CLOSED"})
     assert bad.status_code == 422  # PATCH only does start / wait / resume
     assert (await client.post(f"/api/v1/tickets/{tid}/escalate", json={"reason": ""})).status_code == 422

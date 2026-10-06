@@ -58,7 +58,7 @@ def test_event_catalogue_and_topics():
     assert subscriptions == {
         "ai-worker": {"ticket.created", "ticket.updated", "ticket.resolved"},
         "llm-worker": {"ai.analysis.completed"},
-        "sla-worker": {"ai.analysis.completed", "ticket.updated", "ticket.resolved", "ticket.escalated"},
+        "sla-worker": {"ai.analysis.completed", "ticket.updated", "ticket.resolved", "sla.breached"},
         "notification-worker": {"ticket.assigned", "ticket.escalated", "sla.warning", "sla.breached"},
     }
 
